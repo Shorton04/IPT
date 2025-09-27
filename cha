@@ -1,0 +1,67 @@
+FORM f_display.
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING r_salv_table = DATA(lo_salv)
+        CHANGING  t_table      = gt_output ).
+
+      " Optimize column widths
+      lo_salv->get_columns( )->set_optimize( ).
+
+      " Set column headers
+      DATA(lo_columns) = lo_salv->get_columns( ).
+      DATA(lo_column)  TYPE REF TO cl_salv_column.
+
+      lo_column = lo_columns->get_column( 'ORDERMESSAGESTATUS' ).
+      lo_column->set_long_text( 'Order Message Status' ).
+      lo_column->set_medium_text( 'Msg Status' ).
+      lo_column->set_short_text( 'Status' ).
+
+      lo_column = lo_columns->get_column( 'PLANT' ).
+      lo_column->set_long_text( 'Plant' ).
+
+      lo_column = lo_columns->get_column( 'MAINTENANCEORDER' ).
+      lo_column->set_long_text( 'Maintenance Order' ).
+      lo_column->set_medium_text( 'Order' ).
+      lo_column->set_short_text( 'Order' ).
+
+      lo_column = lo_columns->get_column( 'MAINTENANCEORDEROPERATION' ).
+      lo_column->set_long_text( 'Operation Number' ).
+      lo_column->set_medium_text( 'Operation' ).
+      lo_column->set_short_text( 'Op' ).
+
+      lo_column = lo_columns->get_column( 'SYSTEMSTATUSTEXT' ).
+      lo_column->set_long_text( 'System Status Text' ).
+      lo_column->set_short_text( 'Status' ).
+
+      lo_column = lo_columns->get_column( 'TECHNICALOBJECT' ).
+      lo_column->set_long_text( 'Technical Object' ).
+      lo_column->set_short_text( 'Object' ).
+
+      lo_column = lo_columns->get_column( 'MAINTORDBASICSTARTDATE' ).
+      lo_column->set_long_text( 'Basic Start Date' ).
+      lo_column->set_short_text( 'Start' ).
+
+      lo_column = lo_columns->get_column( 'MAINTORDBASICENDDATE' ).
+      lo_column->set_long_text( 'Basic End Date' ).
+      lo_column->set_short_text( 'End' ).
+
+      lo_column = lo_columns->get_column( 'LATESTACCEPTABLECOMPLDATE' ).
+      lo_column->set_long_text( 'Latest Acceptable Completion Date' ).
+      lo_column->set_short_text( 'Due Date' ).
+
+      lo_column = lo_columns->get_column( 'SYSTEMID' ).
+      lo_column->set_long_text( 'System ID' ).
+      lo_column->set_short_text( 'System' ).
+
+      lo_column = lo_columns->get_column( 'MSG' ).
+      lo_column->set_long_text( 'Error Message' ).
+      lo_column->set_short_text( 'Message' ).
+
+      " Show standard ALV functions
+      lo_salv->get_functions( )->set_all( ).
+
+      " Display ALV
+      lo_salv->display( ).
+    CATCH cx_salv_msg.
+  ENDTRY.
+ENDFORM.
