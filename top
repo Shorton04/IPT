@@ -1,0 +1,31 @@
+*&---------------------------------------------------------------------*
+*& Include          ZIN_CMX_WORKORDER_TOP
+*&---------------------------------------------------------------------*
+
+CONSTANTS: c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
+           c_stat_teco TYPE jest-stat VALUE 'I0045',   "Technically Completed
+           c_stat_lkd  TYPE jest-stat VALUE 'I0043',   "Locked
+           c_stat_cmxc TYPE jest-stat VALUE 'E0010',   "CMX Confirmed
+           c_stat_cmxs TYPE jest-stat VALUE 'E0014'.   "Sent to CMX
+
+TYPES: BEGIN OF ty_output,
+         OrderMessageStatus        TYPE char10,              "OrderMessageStatus
+         Plant                     TYPE werks_d,             "Plant
+         MaintenanceOrder          TYPE aufnr,               "MaintenanceOrder
+         MaintenanceOrderOperation TYPE vornr,               "MaintenanceOrderOperation
+         SystemStatusText          TYPE char40,              "SystemStatusText
+         TechnicalObject           TYPE char30,              "TechnicalObject
+         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,      "Basic Start Date
+         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,      "Basic End Date
+         LatestAcceptableComplDate TYPE viaufkst-lacd_date,  "Latest Acceptable Date
+         SystemId                  TYPE sy-sysid,            "SystemId (for CPI)
+         Msg                       TYPE char72,              "Error Message
+       END OF ty_output.
+
+DATA: gt_output TYPE TABLE OF ty_output,
+      gs_output TYPE ty_output.
+
+DATA: gt_orders TYPE TABLE OF viaufkst,
+      gs_order  TYPE viaufkst.
+
+DATA: gv_atinn TYPE atinn.   "INTERFACE characteristic ID
