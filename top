@@ -1,126 +1,268 @@
+*&---------------------------------------------------------------------*
+*& Include          ZIN_CMX_WORKORDER_F01
+*&---------------------------------------------------------------------*
+
 *---------------------------------------------------------------------*
-* Get ATINN for INTERFACE
+* Fetch candidate orders (FS Step 2 logic)
 *---------------------------------------------------------------------*
-FORM f_get_atinn.
-  SELECT SINGLE atinn INTO gv_atinn
+FORM f_get_orders.
+
+  "1. Find INTERFACE characteristic
+  SELECT SINGLE atinn
+    INTO gv_atinn
     FROM cabn
-    WHERE atnam = 'INTERFACE'.
+   WHERE atnam = 'INTERFACE'.
+
   IF sy-subrc <> 0.
     MESSAGE 'Characteristic INTERFACE not found' TYPE 'E'.
   ENDIF.
-ENDFORM.
 
-*---------------------------------------------------------------------*
-* Fetch candidate orders
-*---------------------------------------------------------------------*
-FORM f_get_orders.
-  " Pull candidate orders
-  SELECT * FROM viaufkst
-    INTO TABLE gt_orders
-    WHERE auart = 'YA07'
-      AND auart IN @so_auart
-      AND iwerk IN @so_werks
-      AND aufnr IN @so_aufnr.
-
-  IF gt_orders IS INITIAL.
-    MESSAGE 'No orders found' TYPE 'I'.
+  "2. Validate mandatory selection
+  IF so_date-low IS INITIAL OR so_time-low IS INITIAL.
+    MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
   ENDIF.
 
-  " Preload INOB (equipment + functional location objects)
-  SELECT objek cuobj
-    FROM inob
-    INTO TABLE @DATA(lt_inob)
-    FOR ALL ENTRIES IN @gt_orders
-    WHERE objek = @gt_orders-equnr
-       OR objek = @gt_orders-tplnr.
+  "3. Select candidate orders from VIAUFKST
+  CLEAR gt_orders.
+  SELECT *
+    FROM viaufkst
+    INTO TABLE gt_orders
+   WHERE auart IN so_auart
+     AND iwerk IN so_werks
+     AND aufnr IN so_aufnr
+     AND ( idat1 IS NOT INITIAL
+        OR idat2 >= so_date-low ).
 
-  SORT lt_inob BY objek.
+  IF gt_orders IS INITIAL.
+    RETURN.
+  ENDIF.
 
-  " Preload AUSP (for INTERFACE char only)
-  SELECT objek atinn atwrt
-    FROM ausp
-    INTO TABLE @DATA(lt_ausp)
-    FOR ALL ENTRIES IN @lt_inob
-    WHERE objek = @lt_inob-cuobj
-      AND atinn = @gv_atinn.
+  "4. Prefetch all supporting data
+  PERFORM f_prefetch_data.
 
-  SORT lt_ausp BY objek.
-
-  " Store preloaded data globally if you want to reuse
-  MOVE lt_inob TO gt_inob.
-  MOVE lt_ausp TO gt_ausp.
+  "5. Loop through candidates
+  LOOP AT gt_orders INTO gs_order.
+    PERFORM f_check_status USING gs_order.
+  ENDLOOP.
 
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Check order status + eligibility
+* Prefetch data for performance (avoid SELECT inside loop)
+*---------------------------------------------------------------------*
+FORM f_prefetch_data.
+
+  CLEAR: gt_inob, gt_ausp, gt_jest, gt_cdhdr.
+
+  "INOB: classification objects
+  SELECT objek cuobj
+    FROM inob
+    FOR ALL ENTRIES IN gt_orders
+    WHERE objek = gt_orders-equnr
+       OR objek = gt_orders-tplnr
+    INTO TABLE gt_inob.
+
+  SORT gt_inob BY objek.
+
+  "AUSP: INTERFACE=CMX
+  SELECT objek, atwrt
+    FROM ausp
+    FOR ALL ENTRIES IN gt_inob
+    WHERE objek = gt_inob-cuobj
+      AND atinn = gv_atinn
+    INTO TABLE gt_ausp.
+
+  SORT gt_ausp BY objek.
+
+  "JEST: statuses of interest
+  SELECT objnr, stat, inact
+    FROM jest
+    FOR ALL ENTRIES IN gt_orders
+    WHERE objnr = gt_orders-objnr
+      AND stat IN ( c_stat_rel, c_stat_teco, c_stat_lkd,
+                    c_stat_cmxc, c_stat_cmxs, 'I0013' )
+    INTO TABLE gt_jest.
+
+  SORT gt_jest BY objnr stat.
+
+  "CDHDR: change documents
+  DATA lt_objid TYPE TABLE OF cdhdr-objectid.
+  LOOP AT gt_orders INTO DATA(ls_order).
+    DATA(lv_objid) = |{ sy-mandt }30{ ls_order-aufnr }|.
+    APPEND lv_objid TO lt_objid.
+  ENDLOOP.
+
+  SELECT objectid, MAX( udate ) AS udate, MAX( utime ) AS utime
+    FROM cdhdr
+    FOR ALL ENTRIES IN lt_objid
+    WHERE objectclas = 'ORDER'
+      AND objectid    = lt_objid
+    GROUP BY objectid
+    INTO TABLE gt_cdhdr.
+
+  SORT gt_cdhdr BY objectid.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Check order statuses and eligibility (FS Step 3–5)
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
   DATA: lv_obj   TYPE cuobj,
         lv_value TYPE atwrt,
-        lv_stat  TYPE jest-stat.
+        lv_stat  TYPE jest-stat,
+        lv_date  TYPE udate,
+        lv_time  TYPE utime,
+        lv_vornr TYPE vornr.
 
-  " Classification object (from preload instead of SELECT SINGLE)
+  "Find classification object
   READ TABLE gt_inob INTO DATA(ls_inob)
-       WITH KEY objek = ps_order-equnr BINARY SEARCH.
-  IF sy-subrc <> 0.
-    READ TABLE gt_inob INTO ls_inob
-         WITH KEY objek = ps_order-tplnr BINARY SEARCH.
-  ENDIF.
+       WITH KEY objek = COND #( WHEN ps_order-equnr IS NOT INITIAL
+                                 THEN ps_order-equnr
+                                 ELSE ps_order-tplnr ).
   IF sy-subrc <> 0. RETURN. ENDIF.
   lv_obj = ls_inob-cuobj.
 
-  " INTERFACE=CMX?
-  READ TABLE gt_ausp INTO DATA(ls_ausp)
-       WITH KEY objek = lv_obj BINARY SEARCH.
+  "INTERFACE must be CMX
+  READ TABLE gt_ausp INTO DATA(ls_ausp) WITH KEY objek = lv_obj.
   IF sy-subrc <> 0 OR ls_ausp-atwrt <> 'CMX'. RETURN. ENDIF.
 
-  " Status check (Released / TECO / Locked active)
-  SELECT SINGLE stat
-    INTO lv_stat
-    FROM jest
-   WHERE objnr = ps_order-objnr
-     AND stat IN (c_stat_rel, c_stat_teco, c_stat_lkd)
-     AND inact = ''.
-  IF sy-subrc <> 0. RETURN. ENDIF.
+  "Check Released / TECO / Locked
+  READ TABLE gt_jest INTO DATA(ls_jest)
+       WITH KEY objnr = ps_order-objnr
+                stat  = c_stat_rel
+                inact = ''.
+  IF sy-subrc = 0.
+    lv_stat = c_stat_rel.
+  ELSE.
+    READ TABLE gt_jest INTO ls_jest
+         WITH KEY objnr = ps_order-objnr
+                  stat  = c_stat_teco
+                  inact = ''.
+    IF sy-subrc = 0.
+      lv_stat = c_stat_teco.
+    ELSE.
+      READ TABLE gt_jest INTO ls_jest
+           WITH KEY objnr = ps_order-objnr
+                    stat  = c_stat_lkd.
+      IF sy-subrc = 0.
+        IF ls_jest-inact IS INITIAL.
+          lv_stat = c_stat_lkd. "Locked
+        ELSE.
+          lv_stat = c_stat_rel. "Unlocked
+        ENDIF.
+      ELSE.
+        RETURN.
+      ENDIF.
+    ENDIF.
+  ENDIF.
 
-  " Skip if CMXC already
-  SELECT SINGLE stat
-    INTO lv_stat
-    FROM jest
-   WHERE objnr = ps_order-objnr
-     AND stat = c_stat_cmxc
-     AND inact = ''.
+  "Skip if CMXC (confirmed)
+  READ TABLE gt_jest TRANSPORTING NO FIELDS
+       WITH KEY objnr = ps_order-objnr
+                stat  = c_stat_cmxc
+                inact = ''.
   IF sy-subrc = 0. RETURN. ENDIF.
 
-  " Build output row
-  PERFORM f_prepare_output USING ps_order lv_stat.
+  "Change detection
+  DATA(lv_objid) = |{ sy-mandt }30{ ps_order-aufnr }|.
+  READ TABLE gt_cdhdr INTO DATA(ls_cdhdr) WITH KEY objectid = lv_objid.
+  IF sy-subrc = 0.
+    lv_date = ls_cdhdr-udate.
+    lv_time = ls_cdhdr-utime.
+  ENDIF.
+
+  IF ( lv_date < so_date-low OR
+       ( lv_date = so_date-low AND lv_time < so_time-low ) ).
+    "Check if already CMXS
+    READ TABLE gt_jest TRANSPORTING NO FIELDS
+         WITH KEY objnr = ps_order-objnr
+                  stat  = c_stat_cmxs
+                  inact = ''.
+    IF sy-subrc = 0.
+      RETURN. "Already sent
+    ENDIF.
+  ENDIF.
+
+  "Get first valid operation
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+  IF lv_vornr IS INITIAL. RETURN. ENDIF.
+
+  "Prepare output row
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prepare output for ALV
+* Get first valid operation (FS Step 7)
+*---------------------------------------------------------------------*
+FORM f_get_operation USING ps_order TYPE viaufkst
+                     CHANGING pv_vornr TYPE afvc-vornr.
+
+  CLEAR pv_vornr.
+
+  SELECT vornr, aufpl, aplzl, objnr
+    FROM afvc
+    WHERE aufpl = @ps_order-aufpl
+    ORDER BY aplzl
+    INTO TABLE @DATA(lt_afvc).
+
+  LOOP AT lt_afvc INTO DATA(ls_afvc).
+    "Check deletion flag (I0013 active)
+    READ TABLE gt_jest TRANSPORTING NO FIELDS
+         WITH KEY objnr = ls_afvc-objnr
+                  stat  = 'I0013'
+                  inact = ''.
+    IF sy-subrc <> 0.
+      pv_vornr = ls_afvc-vornr.
+      EXIT. "First valid operation found
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* Prepare output (FS Step 6 mapping + Case logic)
 *---------------------------------------------------------------------*
 FORM f_prepare_output USING ps_order TYPE viaufkst
+                            pv_vornr TYPE vornr
                             pv_stat  TYPE jest-stat.
 
   CLEAR gs_output.
   gs_output-OrderMessageStatus        = 'CREATE'.
   gs_output-Plant                     = ps_order-iwerk.
   gs_output-MaintenanceOrder          = ps_order-aufnr.
-  gs_output-MaintenanceOrderOperation = ''.
+  gs_output-MaintenanceOrderOperation = pv_vornr.
   gs_output-MaintOrdBasicStartDate    = ps_order-gstrp.
   gs_output-MaintOrdBasicEndDate      = ps_order-gltrp.
   gs_output-LatestAcceptableComplDate = ps_order-lacd_date.
   gs_output-SystemId                  = sy-sysid.
 
-  SELECT SINGLE txt04
-    INTO gs_output-SystemStatusText
-    FROM tj02t
-   WHERE istat = pv_stat
-     AND spras = 'E'.
+  CASE pv_stat.
+    WHEN c_stat_rel.   "Released
+      SELECT SINGLE txt04 INTO gs_output-SystemStatusText
+        FROM tj02t
+       WHERE istat = c_stat_rel
+         AND spras = 'E'.
 
+    WHEN c_stat_teco.  "TECO
+      SELECT SINGLE txt04 INTO gs_output-SystemStatusText
+        FROM tj02t
+       WHERE istat = c_stat_teco
+         AND spras = 'E'.
+
+    WHEN c_stat_lkd.   "Locked
+      SELECT SINGLE txt04 INTO gs_output-SystemStatusText
+        FROM tj02t
+       WHERE istat = c_stat_lkd
+         AND spras = 'E'.
+
+    WHEN OTHERS.
+      CLEAR gs_output-SystemStatusText.
+  ENDCASE.
+
+  "Technical object
   IF ps_order-equnr IS NOT INITIAL.
     gs_output-TechnicalObject = ps_order-equnr.
   ELSE.
