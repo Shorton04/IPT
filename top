@@ -3,7 +3,7 @@
 *&---------------------------------------------------------------------*
 
 *---------------------------------------------------------------------*
-* Fetch candidate orders (FS Step 2 logic)
+* Fetch candidate orders (FS Step 2)
 *---------------------------------------------------------------------*
 FORM f_get_orders.
 
@@ -22,22 +22,22 @@ FORM f_get_orders.
     MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
   ENDIF.
 
-  "3. Select candidate orders from VIAUFKST
+  "3. Select candidate orders
   CLEAR gt_orders.
   SELECT *
     FROM viaufkst
     INTO TABLE gt_orders
-   WHERE auart IN so_auart
-     AND iwerk IN so_werks
-     AND aufnr IN so_aufnr
+   WHERE auart IN @so_auart
+     AND iwerk IN @so_werks
+     AND aufnr IN @so_aufnr
      AND ( idat1 IS NOT INITIAL
-        OR idat2 >= so_date-low ).
+        OR idat2 >= @so_date-low ).
 
   IF gt_orders IS INITIAL.
     RETURN.
   ENDIF.
 
-  "4. Prefetch all supporting data
+  "4. Prefetch supporting data
   PERFORM f_prefetch_data.
 
   "5. Loop through candidates
@@ -48,7 +48,7 @@ FORM f_get_orders.
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prefetch data for performance (avoid SELECT inside loop)
+* Prefetch data (avoid SELECT SINGLE in loop)
 *---------------------------------------------------------------------*
 FORM f_prefetch_data.
 
@@ -57,48 +57,50 @@ FORM f_prefetch_data.
   "INOB: classification objects
   SELECT objek cuobj
     FROM inob
-    FOR ALL ENTRIES IN gt_orders
-    WHERE objek = gt_orders-equnr
-       OR objek = gt_orders-tplnr
-    INTO TABLE gt_inob.
-
+    FOR ALL ENTRIES IN @gt_orders
+    WHERE objek = @gt_orders-equnr
+       OR objek = @gt_orders-tplnr
+    INTO TABLE @gt_inob.
   SORT gt_inob BY objek.
 
-  "AUSP: INTERFACE=CMX
+  "AUSP: INTERFACE = CMX
   SELECT objek, atwrt
     FROM ausp
-    FOR ALL ENTRIES IN gt_inob
-    WHERE objek = gt_inob-cuobj
-      AND atinn = gv_atinn
-    INTO TABLE gt_ausp.
-
+    FOR ALL ENTRIES IN @gt_inob
+    WHERE objek = @gt_inob-cuobj
+      AND atinn = @gv_atinn
+    INTO TABLE @gt_ausp.
   SORT gt_ausp BY objek.
 
   "JEST: statuses of interest
   SELECT objnr, stat, inact
     FROM jest
-    FOR ALL ENTRIES IN gt_orders
-    WHERE objnr = gt_orders-objnr
-      AND stat IN ( c_stat_rel, c_stat_teco, c_stat_lkd,
-                    c_stat_cmxc, c_stat_cmxs, 'I0013' )
-    INTO TABLE gt_jest.
-
+    FOR ALL ENTRIES IN @gt_orders
+    WHERE objnr = @gt_orders-objnr
+      AND stat IN ( @c_stat_rel, @c_stat_teco, @c_stat_lkd,
+                    @c_stat_cmxc, @c_stat_cmxs, 'I0013' )
+    INTO TABLE @gt_jest.
   SORT gt_jest BY objnr stat.
 
-  "CDHDR: change documents
+  "CDHDR: latest change per order
   DATA lt_objid TYPE TABLE OF cdhdr-objectid.
   LOOP AT gt_orders INTO DATA(ls_order).
     DATA(lv_objid) = |{ sy-mandt }30{ ls_order-aufnr }|.
     APPEND lv_objid TO lt_objid.
   ENDLOOP.
 
-  SELECT objectid, MAX( udate ) AS udate, MAX( utime ) AS utime
+  SELECT objectid udate utime
     FROM cdhdr
-    FOR ALL ENTRIES IN lt_objid
+    FOR ALL ENTRIES IN @lt_objid
     WHERE objectclas = 'ORDER'
-      AND objectid    = lt_objid
-    GROUP BY objectid
-    INTO TABLE gt_cdhdr.
+      AND objectid    = @lt_objid
+    INTO TABLE @DATA(lt_cdhdr_raw).
+
+  "Keep only latest udate/utime per objectid
+  SORT lt_cdhdr_raw BY objectid udate DESCENDING utime DESCENDING.
+  DELETE ADJACENT DUPLICATES FROM lt_cdhdr_raw COMPARING objectid.
+
+  gt_cdhdr = CORRESPONDING #( lt_cdhdr_raw ).
 
   SORT gt_cdhdr BY objectid.
 
@@ -116,7 +118,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_time  TYPE utime,
         lv_vornr TYPE vornr.
 
-  "Find classification object
+  "Classification object
   READ TABLE gt_inob INTO DATA(ls_inob)
        WITH KEY objek = COND #( WHEN ps_order-equnr IS NOT INITIAL
                                  THEN ps_order-equnr
@@ -128,7 +130,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   READ TABLE gt_ausp INTO DATA(ls_ausp) WITH KEY objek = lv_obj.
   IF sy-subrc <> 0 OR ls_ausp-atwrt <> 'CMX'. RETURN. ENDIF.
 
-  "Check Released / TECO / Locked
+  "Check status (REL / TECO / LKD)
   READ TABLE gt_jest INTO DATA(ls_jest)
        WITH KEY objnr = ps_order-objnr
                 stat  = c_stat_rel
@@ -150,7 +152,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         IF ls_jest-inact IS INITIAL.
           lv_stat = c_stat_lkd. "Locked
         ELSE.
-          lv_stat = c_stat_rel. "Unlocked
+          lv_stat = c_stat_rel. "Unlocked → treat as Released
         ENDIF.
       ELSE.
         RETURN.
@@ -158,7 +160,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     ENDIF.
   ENDIF.
 
-  "Skip if CMXC (confirmed)
+  "Skip if CMXC
   READ TABLE gt_jest TRANSPORTING NO FIELDS
        WITH KEY objnr = ps_order-objnr
                 stat  = c_stat_cmxc
@@ -175,21 +177,19 @@ FORM f_check_status USING ps_order TYPE viaufkst.
 
   IF ( lv_date < so_date-low OR
        ( lv_date = so_date-low AND lv_time < so_time-low ) ).
-    "Check if already CMXS
+    "Skip if already CMXS
     READ TABLE gt_jest TRANSPORTING NO FIELDS
          WITH KEY objnr = ps_order-objnr
                   stat  = c_stat_cmxs
                   inact = ''.
-    IF sy-subrc = 0.
-      RETURN. "Already sent
-    ENDIF.
+    IF sy-subrc = 0. RETURN. ENDIF.
   ENDIF.
 
   "Get first valid operation
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
   IF lv_vornr IS INITIAL. RETURN. ENDIF.
 
-  "Prepare output row
+  "Prepare output
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
@@ -209,21 +209,20 @@ FORM f_get_operation USING ps_order TYPE viaufkst
     INTO TABLE @DATA(lt_afvc).
 
   LOOP AT lt_afvc INTO DATA(ls_afvc).
-    "Check deletion flag (I0013 active)
     READ TABLE gt_jest TRANSPORTING NO FIELDS
          WITH KEY objnr = ls_afvc-objnr
                   stat  = 'I0013'
                   inact = ''.
     IF sy-subrc <> 0.
       pv_vornr = ls_afvc-vornr.
-      EXIT. "First valid operation found
+      EXIT. "First valid op found
     ENDIF.
   ENDLOOP.
 
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prepare output (FS Step 6 mapping + Case logic)
+* Prepare output (FS Step 6)
 *---------------------------------------------------------------------*
 FORM f_prepare_output USING ps_order TYPE viaufkst
                             pv_vornr TYPE vornr
@@ -240,29 +239,25 @@ FORM f_prepare_output USING ps_order TYPE viaufkst
   gs_output-SystemId                  = sy-sysid.
 
   CASE pv_stat.
-    WHEN c_stat_rel.   "Released
+    WHEN c_stat_rel.
       SELECT SINGLE txt04 INTO gs_output-SystemStatusText
         FROM tj02t
-       WHERE istat = c_stat_rel
+       WHERE istat = @c_stat_rel
          AND spras = 'E'.
-
-    WHEN c_stat_teco.  "TECO
+    WHEN c_stat_teco.
       SELECT SINGLE txt04 INTO gs_output-SystemStatusText
         FROM tj02t
-       WHERE istat = c_stat_teco
+       WHERE istat = @c_stat_teco
          AND spras = 'E'.
-
-    WHEN c_stat_lkd.   "Locked
+    WHEN c_stat_lkd.
       SELECT SINGLE txt04 INTO gs_output-SystemStatusText
         FROM tj02t
-       WHERE istat = c_stat_lkd
+       WHERE istat = @c_stat_lkd
          AND spras = 'E'.
-
     WHEN OTHERS.
       CLEAR gs_output-SystemStatusText.
   ENDCASE.
 
-  "Technical object
   IF ps_order-equnr IS NOT INITIAL.
     gs_output-TechnicalObject = ps_order-equnr.
   ELSE.
