@@ -189,29 +189,22 @@ FORM f_send_cmx.
   LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
 
     DATA: lt_header    TYPE TABLE OF bapi_alm_order_headers_i,
-          lt_header_up TYPE TABLE OF bapi_alm_order_headers_up,
           lt_status    TYPE TABLE OF bapi_alm_order_usrstat,
           lt_methods   TYPE TABLE OF bapi_alm_order_method,
           ls_header    TYPE bapi_alm_order_headers_i,
-          ls_header_up TYPE bapi_alm_order_headers_up,
           ls_status    TYPE bapi_alm_order_usrstat,
           ls_method    TYPE bapi_alm_order_method,
           lt_return    TYPE TABLE OF bapiret2,
           ls_return    TYPE bapiret2,
           lv_objnr     TYPE jest-objnr.
 
-    CLEAR: lt_header, lt_header_up, lt_status, lt_methods, lt_return.
+    CLEAR: lt_header, lt_status, lt_methods, lt_return.
 
     "---------------------------------------------------
     " Header
     "---------------------------------------------------
     ls_header-orderid = <ls_output_row>-MaintenanceOrder.
     APPEND ls_header TO lt_header.
-
-    CLEAR ls_header_up.
-    ls_header_up-orderid    = <ls_output_row>-MaintenanceOrder.
-    ls_header_up-short_text = 'X'.       " Tell BAPI to update header
-    APPEND ls_header_up TO lt_header_up.
 
     "---------------------------------------------------
     " User status
@@ -261,7 +254,6 @@ FORM f_send_cmx.
     CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
       TABLES
         it_header     = lt_header
-        it_header_up  = lt_header_up
         it_methods    = lt_methods
         it_userstatus = lt_status
         return        = lt_return
