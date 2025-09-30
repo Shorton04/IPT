@@ -7,7 +7,7 @@
 *---------------------------------------------------------------------*
 FORM f_get_orders.
 
-  "1. Find INTERFACE characteristic
+  " 1) Find INTERFACE characteristic
   SELECT SINGLE atinn
     INTO gv_atinn
     FROM cabn
@@ -17,12 +17,12 @@ FORM f_get_orders.
     MESSAGE 'Characteristic INTERFACE not found' TYPE 'E'.
   ENDIF.
 
-  "2. Validate mandatory selection
+  " 2) Validate mandatory selection
   IF so_date-low IS INITIAL OR so_time-low IS INITIAL.
     MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
   ENDIF.
 
-  "3. Select candidate orders
+  " 3) Select candidate orders (apply IDAT1 / IDAT2 filter)
   CLEAR gt_orders.
   SELECT *
     FROM viaufkst
@@ -37,10 +37,10 @@ FORM f_get_orders.
     RETURN.
   ENDIF.
 
-  "4. Prefetch supporting data
+  " 4) Prefetch supporting data (to avoid SELECT in loops)
   PERFORM f_prefetch_data.
 
-  "5. Loop through candidates
+  " 5) Loop through candidates and evaluate each
   LOOP AT gt_orders INTO gs_order.
     PERFORM f_check_status USING gs_order.
   ENDLOOP.
@@ -48,148 +48,195 @@ FORM f_get_orders.
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prefetch data (avoid SELECT SINGLE in loop)
+* Prefetch supporting data (safe FOR ALL ENTRIES + guards)
 *---------------------------------------------------------------------*
 FORM f_prefetch_data.
 
   CLEAR: gt_inob, gt_ausp, gt_jest, gt_cdhdr.
 
-  "INOB: classification objects
-  SELECT objek cuobj
-    FROM inob
-    FOR ALL ENTRIES IN @gt_orders
-    WHERE objek = @gt_orders-equnr
-       OR objek = @gt_orders-tplnr
-    INTO TABLE @gt_inob.
-  SORT gt_inob BY objek.
+  " Build list of technical object keys (EQUNR or TPLNR) first
+  DATA: lt_objeks TYPE STANDARD TABLE OF inob-objek WITH EMPTY KEY.
+  DATA: ls_objek_row TYPE LINE OF lt_objeks.
 
-  "AUSP: INTERFACE = CMX
-  SELECT objek, atwrt
-    FROM ausp
-    FOR ALL ENTRIES IN @gt_inob
-    WHERE objek = @gt_inob-cuobj
-      AND atinn = @gv_atinn
-    INTO TABLE @gt_ausp.
-  SORT gt_ausp BY objek.
-
-  "JEST: statuses of interest
-  SELECT objnr, stat, inact
-    FROM jest
-    FOR ALL ENTRIES IN @gt_orders
-    WHERE objnr = @gt_orders-objnr
-      AND stat IN ( @c_stat_rel, @c_stat_teco, @c_stat_lkd,
-                    @c_stat_cmxc, @c_stat_cmxs, 'I0013' )
-    INTO TABLE @gt_jest.
-  SORT gt_jest BY objnr stat.
-
-  "CDHDR: latest change per order
-  DATA lt_objid TYPE TABLE OF cdhdr-objectid.
-  LOOP AT gt_orders INTO DATA(ls_order).
-    DATA(lv_objid) = |{ sy-mandt }30{ ls_order-aufnr }|.
-    APPEND lv_objid TO lt_objid.
+  LOOP AT gt_orders INTO DATA(ls_o).
+    IF ls_o-equnr IS NOT INITIAL.
+      ls_objek_row = ls_o-equnr.
+      APPEND ls_objek_row TO lt_objeks.
+    ELSE.
+      ls_objek_row = ls_o-tplnr.
+      APPEND ls_objek_row TO lt_objeks.
+    ENDIF.
   ENDLOOP.
 
-  SELECT objectid udate utime
-    FROM cdhdr
-    FOR ALL ENTRIES IN @lt_objid
-    WHERE objectclas = 'ORDER'
-      AND objectid    = @lt_objid
-    INTO TABLE @DATA(lt_cdhdr_raw).
+  DELETE ADJACENT DUPLICATES FROM lt_objeks.
 
-  "Keep only latest udate/utime per objectid
-  SORT lt_cdhdr_raw BY objectid udate DESCENDING utime DESCENDING.
-  DELETE ADJACENT DUPLICATES FROM lt_cdhdr_raw COMPARING objectid.
+  " 1) INOB: get CUOBJ for each technical object
+  IF lt_objeks IS NOT INITIAL.
+    SELECT objek cuobj
+      FROM inob
+      FOR ALL ENTRIES IN @lt_objeks
+      WHERE objek = @lt_objeks
+      INTO TABLE @gt_inob.
+    SORT gt_inob BY objek.
+  ENDIF.
 
-  gt_cdhdr = CORRESPONDING #( lt_cdhdr_raw ).
+  " Build list of CUOBJ values
+  DATA: lt_cuobjs TYPE STANDARD TABLE OF inob-cuobj WITH EMPTY KEY.
+  LOOP AT gt_inob INTO DATA(ls_inob_row).
+    APPEND ls_inob_row-cuobj TO lt_cuobjs.
+  ENDLOOP.
+  DELETE ADJACENT DUPLICATES FROM lt_cuobjs.
 
-  SORT gt_cdhdr BY objectid.
+  " 2) AUSP: characteristic values for those CUOBJs (INTERFACE)
+  IF lt_cuobjs IS NOT INITIAL.
+    SELECT objek atwrt
+      FROM ausp
+      FOR ALL ENTRIES IN @lt_cuobjs
+      WHERE objek = @lt_cuobjs
+        AND atinn  = @gv_atinn
+      INTO TABLE @gt_ausp.
+    SORT gt_ausp BY objek.
+  ENDIF.
+
+  " 3) JEST: fetch statuses of interest for all orders
+  IF gt_orders IS NOT INITIAL.
+    SELECT objnr stat inact
+      FROM jest
+      FOR ALL ENTRIES IN @gt_orders
+      WHERE objnr = @gt_orders-objnr
+        AND stat IN ( @c_stat_rel, @c_stat_teco, @c_stat_lkd,
+                      @c_stat_cmxc, @c_stat_cmxs, 'I0013' )
+      INTO TABLE @gt_jest.
+    SORT gt_jest BY objnr stat.
+  ENDIF.
+
+  " 4) CDHDR: latest change per order (get raw rows then keep latest per objectid)
+  DATA: lt_objid TYPE STANDARD TABLE OF cdhdr-objectid WITH EMPTY KEY.
+  LOOP AT gt_orders INTO ls_o.
+    DATA(lv_objid) = |{ sy-mandt }30{ ls_o-aufnr }|.
+    APPEND lv_objid TO lt_objid.
+  ENDLOOP.
+  DELETE ADJACENT DUPLICATES FROM lt_objid.
+
+  IF lt_objid IS NOT INITIAL.
+    DATA: lt_cdhdr_raw TYPE STANDARD TABLE OF cdhdr WITH EMPTY KEY.
+    SELECT objectid udate utime
+      FROM cdhdr
+      FOR ALL ENTRIES IN @lt_objid
+      WHERE objectclas = 'ORDER'
+        AND objectid    = @lt_objid
+      INTO TABLE @lt_cdhdr_raw.
+
+    " Keep only latest udate/utime per objectid
+    SORT lt_cdhdr_raw BY objectid udate DESCENDING utime DESCENDING.
+    DELETE ADJACENT DUPLICATES FROM lt_cdhdr_raw COMPARING objectid.
+
+    " Move relevant fields into gt_cdhdr (simple structure)
+    DATA: ls_cdhdr_simple TYPE ty_cdhdr_simple.
+    LOOP AT lt_cdhdr_raw INTO DATA(ls_r).
+      ls_cdhdr_simple-objectid = ls_r-objectid.
+      ls_cdhdr_simple-udate    = ls_r-udate.
+      ls_cdhdr_simple-utime    = ls_r-utime.
+      APPEND ls_cdhdr_simple TO gt_cdhdr.
+    ENDLOOP.
+    SORT gt_cdhdr BY objectid.
+  ENDIF.
 
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Check order statuses and eligibility (FS Step 3–5)
+* Check order status & eligibility (no DB calls inside loop)
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
-  DATA: lv_obj   TYPE cuobj,
-        lv_value TYPE atwrt,
+  DATA: lv_obj   TYPE inob-objek,
+        lv_cuobj TYPE inob-cuobj,
         lv_stat  TYPE jest-stat,
-        lv_date  TYPE udate,
-        lv_time  TYPE utime,
-        lv_vornr TYPE vornr.
+        lv_date  TYPE cdhdr-udate,
+        lv_time  TYPE cdhdr-utime,
+        lv_vornr TYPE afvc-vornr.
 
-  "Classification object
-  READ TABLE gt_inob INTO DATA(ls_inob)
-       WITH KEY objek = COND #( WHEN ps_order-equnr IS NOT INITIAL
-                                 THEN ps_order-equnr
-                                 ELSE ps_order-tplnr ).
-  IF sy-subrc <> 0. RETURN. ENDIF.
-  lv_obj = ls_inob-cuobj.
+  " Determine object key (equipment or functional loc)
+  IF ps_order-equnr IS NOT INITIAL.
+    lv_obj = ps_order-equnr.
+  ELSE.
+    lv_obj = ps_order-tplnr.
+  ENDIF.
 
-  "INTERFACE must be CMX
-  READ TABLE gt_ausp INTO DATA(ls_ausp) WITH KEY objek = lv_obj.
-  IF sy-subrc <> 0 OR ls_ausp-atwrt <> 'CMX'. RETURN. ENDIF.
+  " Read CUOBJ from prefetched INOB
+  READ TABLE gt_inob INTO DATA(ls_inob) WITH KEY objek = lv_obj.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+  lv_cuobj = ls_inob-cuobj.
 
-  "Check status (REL / TECO / LKD)
-  READ TABLE gt_jest INTO DATA(ls_jest)
-       WITH KEY objnr = ps_order-objnr
-                stat  = c_stat_rel
-                inact = ''.
+  " Read AUSP prefetched to check INTERFACE = 'CMX'
+  READ TABLE gt_ausp INTO DATA(ls_ausp) WITH KEY objek = lv_cuobj.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
+  IF ls_ausp-atwrt <> 'CMX'.
+    RETURN.
+  ENDIF.
+
+  " Check statuses: prefer REL, else TECO, else LKD (and handle unlock)
+  CLEAR lv_stat.
+  READ TABLE gt_jest INTO DATA(ls_jest) WITH KEY objnr = ps_order-objnr stat = @c_stat_rel inact = ''.
   IF sy-subrc = 0.
     lv_stat = c_stat_rel.
   ELSE.
-    READ TABLE gt_jest INTO ls_jest
-         WITH KEY objnr = ps_order-objnr
-                  stat  = c_stat_teco
-                  inact = ''.
+    READ TABLE gt_jest INTO ls_jest WITH KEY objnr = ps_order-objnr stat = @c_stat_teco inact = ''.
     IF sy-subrc = 0.
       lv_stat = c_stat_teco.
     ELSE.
-      READ TABLE gt_jest INTO ls_jest
-           WITH KEY objnr = ps_order-objnr
-                    stat  = c_stat_lkd.
+      READ TABLE gt_jest INTO ls_jest WITH KEY objnr = ps_order-objnr stat = @c_stat_lkd.
       IF sy-subrc = 0.
+        " If INACT blank => locked, else it's unlocked (treat unlocked as REL)
         IF ls_jest-inact IS INITIAL.
-          lv_stat = c_stat_lkd. "Locked
+          lv_stat = c_stat_lkd.
         ELSE.
-          lv_stat = c_stat_rel. "Unlocked → treat as Released
+          lv_stat = c_stat_rel.
         ENDIF.
       ELSE.
+        " Not in any eligible status
         RETURN.
       ENDIF.
     ENDIF.
   ENDIF.
 
-  "Skip if CMXC
-  READ TABLE gt_jest TRANSPORTING NO FIELDS
-       WITH KEY objnr = ps_order-objnr
-                stat  = c_stat_cmxc
-                inact = ''.
-  IF sy-subrc = 0. RETURN. ENDIF.
+  " If CMXC (confirmed) is active => skip
+  READ TABLE gt_jest TRANSPORTING NO FIELDS WITH KEY objnr = ps_order-objnr stat = @c_stat_cmxc inact = ''.
+  IF sy-subrc = 0.
+    RETURN.
+  ENDIF.
 
-  "Change detection
+  " Change detection: read prefetched CDHDR entry for this order (if any)
   DATA(lv_objid) = |{ sy-mandt }30{ ps_order-aufnr }|.
   READ TABLE gt_cdhdr INTO DATA(ls_cdhdr) WITH KEY objectid = lv_objid.
   IF sy-subrc = 0.
     lv_date = ls_cdhdr-udate.
     lv_time = ls_cdhdr-utime.
+  ELSE.
+    CLEAR: lv_date, lv_time.
   ENDIF.
 
+  " If unchanged since check-from datetime -> only proceed if CMXS not active
   IF ( lv_date < so_date-low OR
        ( lv_date = so_date-low AND lv_time < so_time-low ) ).
-    "Skip if already CMXS
-    READ TABLE gt_jest TRANSPORTING NO FIELDS
-         WITH KEY objnr = ps_order-objnr
-                  stat  = c_stat_cmxs
-                  inact = ''.
-    IF sy-subrc = 0. RETURN. ENDIF.
+    READ TABLE gt_jest TRANSPORTING NO FIELDS WITH KEY objnr = ps_order-objnr stat = @c_stat_cmxs inact = ''.
+    IF sy-subrc = 0.
+      " Already sent previously -> skip
+      RETURN.
+    ENDIF.
   ENDIF.
 
-  "Get first valid operation
+  " Get first valid operation
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-  IF lv_vornr IS INITIAL. RETURN. ENDIF.
+  IF lv_vornr IS INITIAL.
+    RETURN.
+  ENDIF.
 
-  "Prepare output
+  " Prepare output row (pass status to mapping)
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
@@ -202,27 +249,30 @@ FORM f_get_operation USING ps_order TYPE viaufkst
 
   CLEAR pv_vornr.
 
-  SELECT vornr, aufpl, aplzl, objnr
+  DATA lt_afvc TYPE STANDARD TABLE OF afvc WITH EMPTY KEY.
+  SELECT vornr aufpl aplzl objnr
     FROM afvc
-    WHERE aufpl = @ps_order-aufpl
-    ORDER BY aplzl
-    INTO TABLE @DATA(lt_afvc).
+    INTO TABLE @lt_afvc
+   WHERE aufpl = @ps_order-aufpl
+   ORDER BY aplzl.
+
+  IF lt_afvc IS INITIAL.
+    RETURN.
+  ENDIF.
 
   LOOP AT lt_afvc INTO DATA(ls_afvc).
-    READ TABLE gt_jest TRANSPORTING NO FIELDS
-         WITH KEY objnr = ls_afvc-objnr
-                  stat  = 'I0013'
-                  inact = ''.
+    " If deletion indicator I0013 exists and active -> skip this operation
+    READ TABLE gt_jest TRANSPORTING NO FIELDS WITH KEY objnr = ls_afvc-objnr stat = 'I0013' inact = ''.
     IF sy-subrc <> 0.
       pv_vornr = ls_afvc-vornr.
-      EXIT. "First valid op found
+      EXIT.
     ENDIF.
   ENDLOOP.
 
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prepare output (FS Step 6)
+* Prepare output (FS Step 6 mapping)
 *---------------------------------------------------------------------*
 FORM f_prepare_output USING ps_order TYPE viaufkst
                             pv_vornr TYPE vornr
