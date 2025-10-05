@@ -1,257 +1,33 @@
 *&---------------------------------------------------------------------*
-*& Include          ZIN_CMX_WORKORDER_F01
+*& Include          ZIN_CMX_WORKORDER_TOP
 *&---------------------------------------------------------------------*
 
-*---------------------------------------------------------------------*
-* Fetch candidate orders
-*---------------------------------------------------------------------*
-FORM f_get_orders.
+CONSTANTS: c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
+           c_stat_teco TYPE jest-stat VALUE 'I0045',   "Technically Completed
+           c_stat_lkd  TYPE jest-stat VALUE 'I0043',   "Locked
+           c_stat_cmxc TYPE jest-stat VALUE 'E0010',   "CMX Confirmed
+           c_stat_cmxs TYPE jest-stat VALUE 'E0014'.   "Sent to CMX
 
-  " Validate required settings
-  SELECT SINGLE atinn INTO gv_atinn
-    FROM cabn
-   WHERE atnam = 'INTERFACE'.
-  IF sy-subrc <> 0.
-    MESSAGE 'Characteristic INTERFACE not found' TYPE 'E'.
-  ENDIF.
+TYPES: BEGIN OF ty_output,
+         OrderMessageStatus        TYPE char10,              "OrderMessageStatus
+         Plant                     TYPE werks_d,             "Plant
+         MaintenanceOrder          TYPE aufnr,               "MaintenanceOrder
+         MaintenanceOrderOperation TYPE vornr,               "MaintenanceOrderOperation
+         SystemStatusText          TYPE char40,              "SystemStatusText
+         TechnicalObject           TYPE char30,              "TechnicalObject
+         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,      "Basic Start Date
+         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,      "Basic End Date
+         LatestAcceptableComplDate TYPE viaufkst-lacd_date,  "Latest Acceptable Date
+         SystemId                  TYPE sy-sysid,            "SystemId (for CPI)
+         Msg                       TYPE char72,              "Error Message
+       END OF ty_output.
 
-  IF so_date-low IS INITIAL OR so_time-low IS INITIAL.
-    MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
-  ENDIF.
 
-  " Select candidate orders
-  SELECT *
-    INTO TABLE gt_orders
-    FROM viaufkst
-   WHERE auart = 'YA07'                  " force YA07
-     AND auart IN so_auart
-     AND iwerk IN so_werks
-     AND aufnr IN so_aufnr.
 
-  LOOP AT gt_orders INTO gs_order.
-    PERFORM f_check_status USING gs_order.
-  ENDLOOP.
+DATA: gt_output TYPE TABLE OF ty_output,
+      gs_output TYPE ty_output.
 
-ENDFORM.
+DATA: gt_orders TYPE TABLE OF viaufkst,
+      gs_order  TYPE viaufkst.
 
-*---------------------------------------------------------------------*
-* Check order statuses and eligibility (all selects inline)
-*---------------------------------------------------------------------*
-FORM f_check_status USING ps_order TYPE viaufkst.
-
-  DATA: lv_obj   TYPE cuobj,
-        lv_value TYPE atwrt,
-        lv_stat  TYPE jest-stat,
-        lv_date  TYPE udate,
-        lv_time  TYPE utime,
-        lv_objid TYPE c LENGTH 20,
-        lv_inact TYPE jest-inact,
-        lv_vornr TYPE vornr.
-
-  "------------------------------------------------------------
-  " 1. Classification object (from INOB)
-  "------------------------------------------------------------
-  IF ps_order-equnr IS NOT INITIAL.
-    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
-  ELSE.
-    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-tplnr.
-  ENDIF.
-  IF lv_obj IS INITIAL. RETURN. ENDIF.
-
-  "------------------------------------------------------------
-  " 2. Characteristic INTERFACE must = 'CMX' (from AUSP)
-  "------------------------------------------------------------
-  SELECT SINGLE atwrt
-    INTO lv_value
-    FROM ausp
-    WHERE objek = lv_obj
-      AND atinn = gv_atinn.
-  IF sy-subrc <> 0 OR lv_value <> 'CMX'. RETURN. ENDIF.
-
-  "------------------------------------------------------------
-  " 3. System status check (must be REL, TECO, or LKD active)
-  "------------------------------------------------------------
-  SELECT SINGLE stat
-    INTO lv_stat
-    FROM jest
-    WHERE objnr = ps_order-objnr
-      AND stat IN (c_stat_rel, c_stat_teco, c_stat_lkd)
-      AND inact = ''.
-  IF sy-subrc <> 0. RETURN. ENDIF.
-
-  "------------------------------------------------------------
-  " 4. Skip if already CMXC active
-  "------------------------------------------------------------
-  SELECT SINGLE stat
-    INTO lv_stat
-    FROM jest
-    WHERE objnr = ps_order-objnr
-      AND stat = c_stat_cmxc
-      AND inact = ''.
-  IF sy-subrc = 0. RETURN. ENDIF.
-
-  "------------------------------------------------------------
-  " 5. Lock/Unlock handling
-  "------------------------------------------------------------
-  SELECT SINGLE stat inact
-    INTO (lv_stat, lv_inact)
-    FROM jest
-    WHERE objnr = ps_order-objnr
-      AND stat = c_stat_lkd.
-  IF sy-subrc = 0.
-    IF lv_inact IS INITIAL.
-      lv_stat = c_stat_lkd. "Locked
-    ELSE.
-      lv_stat = c_stat_rel. "Unlocked
-    ENDIF.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 6. Change check (from CDHDR latest change)
-  "------------------------------------------------------------
-  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-  SELECT MAX( udate ) MAX( utime )
-    INTO (lv_date, lv_time)
-    FROM cdhdr
-   WHERE objectclas = 'ORDER'
-     AND objectid    = lv_objid.
-
-  IF ( lv_date < so_date-low OR
-       ( lv_date = so_date-low AND lv_time < so_time-low ) ).
-    " If older than cutoff, skip if already CMXS
-    SELECT SINGLE stat
-      INTO lv_stat
-      FROM jest
-      WHERE objnr = ps_order-objnr
-        AND stat = c_stat_cmxs
-        AND inact = ''.
-    IF sy-subrc = 0. RETURN. ENDIF.
-  ENDIF.
-
-  "------------------------------------------------------------
-  " 7. Operation number (from AFVC, skip deleted ops I0013)
-  "------------------------------------------------------------
-  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-
-  "------------------------------------------------------------
-  " 8. Prepare output row
-  "------------------------------------------------------------
-  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Get first active operation (skip I0013 deleted ops)
-*---------------------------------------------------------------------*
-FORM f_get_operation USING    ps_order TYPE viaufkst
-                     CHANGING pv_vornr TYPE afvc-vornr.
-
-  DATA: ls_afvc TYPE afvc,
-        lv_stat TYPE jest-stat.
-
-  CLEAR pv_vornr.
-
-  SELECT vornr aufpl aplzl objnr
-    INTO (ls_afvc-vornr, ls_afvc-aufpl, ls_afvc-aplzl, ls_afvc-objnr)
-    FROM afvc
-    WHERE aufpl = ps_order-aufpl
-    ORDER BY aplzl
-    UP TO 1 ROWS.
-  ENDSELECT.
-
-  IF sy-subrc = 0.
-    " check if operation is deleted
-    SELECT SINGLE stat
-      INTO lv_stat
-      FROM jest
-      WHERE objnr = ls_afvc-objnr
-        AND stat = 'I0013'
-        AND inact = ''.
-    IF sy-subrc = 0.
-      CLEAR pv_vornr. "deleted -> ignore
-    ELSE.
-      pv_vornr = ls_afvc-vornr.
-    ENDIF.
-  ENDIF.
-
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Prepare output
-*---------------------------------------------------------------------*
-FORM f_prepare_output USING ps_order TYPE viaufkst
-                            pv_vornr TYPE vornr
-                            pv_stat  TYPE jest-stat.
-
-  CLEAR gs_output.
-  gs_output-OrderMessageStatus        = 'CREATE'.
-  gs_output-Plant                     = ps_order-iwerk.
-  gs_output-MaintenanceOrder          = ps_order-aufnr.
-  gs_output-MaintenanceOrderOperation = pv_vornr.
-  gs_output-MaintOrdBasicStartDate    = ps_order-gstrp.
-  gs_output-MaintOrdBasicEndDate      = ps_order-gltrp.
-  gs_output-LatestAcceptableComplDate = ps_order-lacd_date.
-  gs_output-SystemId                  = sy-sysid.
-
-  SELECT SINGLE txt04 INTO gs_output-SystemStatusText
-    FROM tj02t
-   WHERE istat = pv_stat
-     AND spras = 'E'.
-
-  IF ps_order-equnr IS NOT INITIAL.
-    gs_output-TechnicalObject = ps_order-equnr.
-  ELSE.
-    gs_output-TechnicalObject = ps_order-tplnr.
-  ENDIF.
-
-  APPEND gs_output TO gt_output.
-
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Update SAP status (your BAPI logic preserved)
-*---------------------------------------------------------------------*
-FORM f_send_cmx.
-  " (unchanged, your BAPI logic is already correct)
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Display ALV (your SALV logic preserved)
-*---------------------------------------------------------------------*
-FORM f_display.
-  " (unchanged)
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Send JSON payload to CPI (your HTTP logic preserved)
-*---------------------------------------------------------------------*
-FORM f_send_to_cpi.
-  " (unchanged)
-ENDFORM.
-
-*---------------------------------------------------------------------*
-* Write entry to ZCMX_RUN_LOG
-*---------------------------------------------------------------------*
-FORM f_write_log USING    pv_aufnr   TYPE aufnr
-                          pv_vornr   TYPE vornr
-                          pv_werks   TYPE werks_d
-                          pv_stat    TYPE char20
-                          pv_msg     TYPE char72.
-
-  DATA: ls_log TYPE zcmx_run_log.
-
-  CLEAR ls_log.
-  CONCATENATE sy-datum sy-uzeit sy-uname INTO ls_log-logid.
-  ls_log-mandt      = sy-mandt.
-  ls_log-aufnr      = pv_aufnr.
-  ls_log-vornr      = pv_vornr.
-  ls_log-werks      = pv_werks.
-  ls_log-stat       = pv_stat.
-  ls_log-system_id  = sy-sysid.
-  ls_log-run_date   = sy-datum.
-  ls_log-run_time   = sy-uzeit.
-  ls_log-msg        = pv_msg.
-  ls_log-created_by = sy-uname.
-
-  INSERT zcmx_run_log FROM ls_log.
-ENDFORM.
+DATA: gv_atinn TYPE atinn.   "INTERFACE characteristic ID
