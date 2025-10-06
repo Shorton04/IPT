@@ -8,6 +8,8 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
   SELECT-OPTIONS: so_werks FOR viaufkst-iwerk OBLIGATORY,   "Plant
                   so_auart FOR viaufkst-auart OBLIGATORY,   "Order Type
                   so_aufnr FOR viaufkst-aufnr,              "Order Number
+                  so_equnr FOR viaufkst-equnr,              "Equipment
+                  so_floc  FOR viaufkst-tplnr,              "Functional Location
                   so_date  FOR sy-datum NO-EXTENSION,       "Check from Date
                   so_time  FOR sy-uzeit NO-EXTENSION.       "Check from Time
 
