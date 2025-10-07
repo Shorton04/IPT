@@ -1,8 +1,53 @@
-  "---------------------------------------------------
-  " Step 2: CMXC active but no TECO → skip
-  "---------------------------------------------------
-  DATA(lv_cmx_active) = abap_false.
+*---------------------------------------------------------------------*
+* Check status
+*---------------------------------------------------------------------*
+FORM f_check_status USING ps_order TYPE viaufkst.
 
+  DATA: lv_obj           TYPE cuobj,
+        lv_value         TYPE atwrt,
+        lv_stat          TYPE jest-stat,
+        lv_date          TYPE udate,
+        lv_time          TYPE utime,
+        lv_objid         TYPE c LENGTH 20,
+        lv_inact         TYPE jest-inact,
+        lv_vornr         TYPE vornr,
+        lv_cmx_active    TYPE abap_bool VALUE abap_false,
+        lv_teco_active   TYPE abap_bool VALUE abap_false,
+        lv_cmxs_active   TYPE abap_bool VALUE abap_false,
+        lv_cmxs_date     TYPE udate,
+        lv_cmxs_time     TYPE utime.
+
+  "---------------------------------------------------
+  " Classification object (equipment or functional location)
+  "---------------------------------------------------
+  IF ps_order-equnr IS NOT INITIAL.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
+  ELSE.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
+  ENDIF.
+
+  IF lv_obj IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 1: Status must be REL or TECO
+  "---------------------------------------------------
+  SELECT SINGLE stat
+    INTO @lv_stat
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat IN ('I0002', 'I0045')   " REL or TECO
+     AND inact = ''.
+
+  IF sy-subrc <> 0.
+    RETURN. " Not valid (no REL/TECO)
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 2: Handle CMXC + TECO logic
+  "---------------------------------------------------
+  " Check if CMXC is active
   SELECT SINGLE inact
     INTO @lv_inact
     FROM jest
@@ -13,15 +58,102 @@
     lv_cmx_active = abap_true.
   ENDIF.
 
-  IF lv_cmx_active = abap_true.
-    " If CMXC active but TECO not yet done, skip
-    SELECT SINGLE stat
-      INTO @lv_stat
-      FROM jest
-     WHERE objnr = @ps_order-objnr
-       AND stat  = 'I0045'  " TECO
-       AND inact = ''.
-    IF sy-subrc <> 0.
-      RETURN. " Skip only in this exact condition
+  " Check if TECO is active
+  SELECT SINGLE stat
+    INTO @lv_stat
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'I0045' " TECO
+     AND inact = ''.
+
+  IF sy-subrc = 0.
+    lv_teco_active = abap_true.
+  ENDIF.
+
+  " Skip only if CMXC active and TECO not active
+  IF lv_cmx_active = abap_true AND lv_teco_active = abap_false.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 3: INTERFACE must be CMX
+  "---------------------------------------------------
+  SELECT SINGLE atwrt
+    INTO @lv_value
+    FROM ausp
+   WHERE objek = @lv_obj
+     AND atinn = @gv_atinn.
+
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 4: Check CMXS (already sent) vs CDHDR changes
+  "---------------------------------------------------
+  SELECT SINGLE stat
+    INTO @lv_stat
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'E0014'
+     AND inact = ''.
+
+  IF sy-subrc = 0.
+    lv_cmxs_active = abap_true.
+
+    " Get latest CMXS timestamp from CDHDR
+    CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+    SELECT MAX( udate ) AS max_date,
+           MAX( utime ) AS max_time
+      INTO ( @lv_cmxs_date, @lv_cmxs_time )
+      FROM cdhdr
+     WHERE objectclas = 'ORDER'
+       AND objectid    = @lv_objid.
+  ENDIF.
+
+  " Latest ORDER change timestamp
+  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+  SELECT MAX( udate ) AS max_date,
+         MAX( utime ) AS max_time
+    INTO ( @lv_date, @lv_time )
+    FROM cdhdr
+   WHERE objectclas = 'ORDER'
+     AND objectid    = @lv_objid.
+
+  " Skip only if CMXS exists AND no newer change found
+  IF lv_cmxs_active = abap_true.
+    IF ( lv_date IS INITIAL
+      OR lv_date < lv_cmxs_date
+      OR ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
+      RETURN. " Already REL/TECO + CMXS and no new change → skip
     ENDIF.
   ENDIF.
+
+  "---------------------------------------------------
+  " Step 5: Lock/Unlock handling (I0043)
+  "---------------------------------------------------
+  SELECT SINGLE inact
+    INTO @lv_inact
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'I0043'. " Locked
+
+  IF sy-subrc = 0.
+    IF lv_inact IS INITIAL.
+      lv_stat = 'I0043'. " Locked
+    ELSE.
+      lv_stat = 'I0002'. " Unlocked → treat as REL
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 6: Get first valid operation
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+
+  "---------------------------------------------------
+  " Step 7: Prepare output for ALV and sending
+  "---------------------------------------------------
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+
+ENDFORM.
