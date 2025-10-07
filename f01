@@ -1,5 +1,5 @@
 *---------------------------------------------------------------------*
-* Prefetch related master data (S/4HANA strict SQL mode)
+* Prefetch related master data (final version for D30)
 *---------------------------------------------------------------------*
 FORM f_prefetch_data.
 
@@ -11,9 +11,12 @@ FORM f_prefetch_data.
         lt_objnr     TYPE TABLE OF jest-objnr,
         lt_objectid  TYPE TABLE OF cdhdr-objectid,
         lt_cuobj     TYPE TABLE OF inob-cuobj,
+        lt_ausp_objek TYPE TABLE OF ausp-objek,
         lv_objid     TYPE cdhdr-objectid.
 
   LOOP AT gt_orders INTO gs_order.
+
+    " Equipment or functional location
     IF gs_order-equnr IS NOT INITIAL.
       APPEND gs_order-equnr TO lt_objek.
     ENDIF.
@@ -22,12 +25,16 @@ FORM f_prefetch_data.
       APPEND gs_order-tplnr TO lt_objek.
     ENDIF.
 
+    " Object number for JEST
     APPEND gs_order-objnr TO lt_objnr.
 
+    " CDHDR Object ID = Client + '30' + Order Number
     CONCATENATE sy-mandt '30' gs_order-aufnr INTO lv_objid.
     APPEND lv_objid TO lt_objectid.
+
   ENDLOOP.
 
+  " Remove duplicates for performance
   SORT lt_objek.     DELETE ADJACENT DUPLICATES FROM lt_objek.
   SORT lt_objnr.     DELETE ADJACENT DUPLICATES FROM lt_objnr.
   SORT lt_objectid.  DELETE ADJACENT DUPLICATES FROM lt_objectid.
@@ -55,26 +62,34 @@ FORM f_prefetch_data.
   ENDIF.
 
   "----------------------------------------------------------
-  " 3) AUSP characteristics (for CUOBJ)
+  " 3) AUSP characteristics (CUOBJ → OBJEK conversion)
   "----------------------------------------------------------
   IF gt_inob IS NOT INITIAL.
+
+    " Gather CUOBJs
     LOOP AT gt_inob INTO gs_inob.
       APPEND gs_inob-cuobj TO lt_cuobj.
     ENDLOOP.
-
     SORT lt_cuobj. DELETE ADJACENT DUPLICATES FROM lt_cuobj.
 
-    IF lt_cuobj IS NOT INITIAL.
+    " Convert CUOBJ (CHAR18) to OBJEK (CHAR30) before selecting from AUSP
+    LOOP AT lt_cuobj INTO DATA(lv_cuobj).
+      DATA(lv_ausp_objek) = lv_cuobj.
+      APPEND lv_ausp_objek TO lt_ausp_objek.
+    ENDLOOP.
+
+    IF lt_ausp_objek IS NOT INITIAL.
       SELECT objek, atinn, atwrt
         FROM ausp
         INTO TABLE @gt_ausp
-        FOR ALL ENTRIES IN @lt_cuobj
-        WHERE objek = @lt_cuobj-table_line.
+        FOR ALL ENTRIES IN @lt_ausp_objek
+        WHERE objek = @lt_ausp_objek-table_line.
     ENDIF.
+
   ENDIF.
 
   "----------------------------------------------------------
-  " 4) CDHDR changes
+  " 4) CDHDR changes (ORDER class)
   "----------------------------------------------------------
   IF lt_objectid IS NOT INITIAL.
     SELECT objectid, udate, utime
