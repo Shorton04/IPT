@@ -1,80 +1,88 @@
-*&---------------------------------------------------------------------*
-*& Include          ZIN_CMX_WORKORDER_TOP
-*&---------------------------------------------------------------------*
+FORM f_send_cmx.
 
-CONSTANTS: 
-  c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
-  c_stat_teco TYPE jest-stat VALUE 'I0045',   "Technically Completed
-  c_stat_lkd  TYPE jest-stat VALUE 'I0043',   "Locked
-  c_stat_cmxc TYPE jest-stat VALUE 'E0010',   "CMX Confirmed
-  c_stat_cmxs TYPE jest-stat VALUE 'E0014'.   "Sent to CMX
+  DATA lv_mode TYPE char10.
 
+  IF p_test = abap_true.
+    lv_mode = 'TEST'.
+  ELSE.
+    lv_mode = 'LIVE'.
+  ENDIF.
 
-*---------------------------------------------------------------------*
-* Type Definitions
-*---------------------------------------------------------------------*
+  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
 
-"--- Output structure for ALV display
-TYPES: BEGIN OF ty_output,
-         OrderMessageStatus        TYPE char10,
-         Plant                     TYPE werks_d,
-         MaintenanceOrder          TYPE aufnr,
-         MaintenanceOrderOperation TYPE vornr,
-         SystemStatusText          TYPE char40,
-         TechnicalObject           TYPE char30,
-         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,
-         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,
-         LatestAcceptableComplDate TYPE viaufkst-lacd_date,
-         SystemId                  TYPE sy-sysid,
-         Msg                       TYPE char72,
-       END OF ty_output.
+    " Skip Locked or TECO
+    IF <ls_output_row>-SystemStatusText = 'LOCKED'
+    OR  <ls_output_row>-SystemStatusText = 'TECO'.
+      <ls_output_row>-msg = |Skipped: { <ls_output_row>-SystemStatusText } order|.
+      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
+                                 <ls_output_row>-MaintenanceOrderOperation
+                                 <ls_output_row>-Plant
+                                 'CMXS'
+                                 <ls_output_row>-msg.
+      CONTINUE.
+    ENDIF.
 
-"--- Prefetch helper structures
-TYPES: BEGIN OF ty_jest_data,
-         objnr TYPE jest-objnr,
-         stat  TYPE jest-stat,
-         inact TYPE jest-inact,
-       END OF ty_jest_data.
+    "---------------------------------------------------
+    " TEST mode → simulate without sending
+    "---------------------------------------------------
+    IF lv_mode = 'TEST'.
+      <ls_output_row>-msg = |[Test Mode] Would send CMXS to CPI for order { <ls_output_row>-MaintenanceOrder }|.
+      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
+                                 <ls_output_row>-MaintenanceOrderOperation
+                                 <ls_output_row>-Plant
+                                 'CMXS'
+                                 <ls_output_row>-msg.
+      CONTINUE.
+    ENDIF.
 
-TYPES: BEGIN OF ty_inob_data,
-         objek TYPE inob-objek,
-         cuobj TYPE inob-cuobj,
-       END OF ty_inob_data.
+    "---------------------------------------------------
+    " LIVE mode → perform actual update
+    "---------------------------------------------------
+    DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
+          lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
+          lt_methods TYPE TABLE OF bapi_alm_order_method,
+          lt_return  TYPE TABLE OF bapiret2,
+          ls_return  TYPE bapiret2.
 
-TYPES: BEGIN OF ty_ausp_data,
-         objek TYPE ausp-objek,
-         atinn TYPE ausp-atinn,
-         atwrt TYPE ausp-atwrt,
-       END OF ty_ausp_data.
+    CLEAR: lt_header, lt_status, lt_methods, lt_return.
 
-TYPES: BEGIN OF ty_cdhdr_data,
-         objectid TYPE cdhdr-objectid,
-         udate    TYPE cdhdr-udate,
-         utime    TYPE cdhdr-utime,
-       END OF ty_cdhdr_data.
+    " Header
+    APPEND VALUE #( orderid = <ls_output_row>-MaintenanceOrder ) TO lt_header.
 
+    " User Status
+    APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu ) TO lt_status.
 
-*---------------------------------------------------------------------*
-* Data Declarations
-*---------------------------------------------------------------------*
+    " Methods
+    APPEND VALUE #( refnumber = '00001' objecttype = 'HEADER' method = 'CHANGE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS' method = 'CHANGE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00003' objecttype = 'ORDER' method = 'SAVE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
 
-"--- Main output
-DATA: gt_output TYPE TABLE OF ty_output,
-      gs_output TYPE ty_output.
+    " Call BAPI
+    CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+      TABLES
+        it_header     = lt_header
+        it_methods    = lt_methods
+        it_userstatus = lt_status
+        return        = lt_return.
 
-"--- Orders
-DATA: gt_orders TYPE TABLE OF viaufkst,
-      gs_order  TYPE viaufkst.
+    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      <ls_output_row>-msg = ls_return-message(72).
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    ELSE.
+      <ls_output_row>-msg = 'CMXS status updated successfully'.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING wait = 'X'.
+    ENDIF.
 
-"--- Prefetched master data tables
-DATA: gt_jest  TYPE TABLE OF ty_jest_data,
-      gs_jest  TYPE ty_jest_data,
-      gt_inob  TYPE TABLE OF ty_inob_data,
-      gs_inob  TYPE ty_inob_data,
-      gt_ausp  TYPE TABLE OF ty_ausp_data,
-      gs_ausp  TYPE ty_ausp_data,
-      gt_cdhdr TYPE TABLE OF ty_cdhdr_data,
-      gs_cdhdr TYPE ty_cdhdr_data.
+    PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
+                               <ls_output_row>-MaintenanceOrderOperation
+                               <ls_output_row>-Plant
+                               'CMXS'
+                               <ls_output_row>-msg.
 
-"--- Misc
-DATA: gv_atinn TYPE atinn.   "INTERFACE characteristic ID
+  ENDLOOP.
+
+  COMMIT WORK.
+
+ENDFORM.
