@@ -152,124 +152,133 @@ ENDFORM.
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
-  DATA: lv_obj        TYPE cuobj,
-        lv_value      TYPE atwrt,
-        lv_vornr      TYPE vornr,
-        lv_stat       TYPE jest-stat,
-        lv_has_rel    TYPE abap_bool VALUE abap_false,
-        lv_has_teco   TYPE abap_bool VALUE abap_false,
-        lv_has_lkd    TYPE abap_bool VALUE abap_false,
-        lv_has_cmxs   TYPE abap_bool VALUE abap_false,
-        lv_has_cmxc   TYPE abap_bool VALUE abap_false,
-        lv_lock_date  TYPE udate,
-        lv_lock_time  TYPE utime,
-        lv_cmxs_date  TYPE udate,
-        lv_cmxs_time  TYPE utime,
-        lv_objid      TYPE c LENGTH 20.
+  DATA: lv_obj   TYPE cuobj,
+        lv_value TYPE atwrt,
+        lv_stat  TYPE jest-stat,
+        lv_date  TYPE udate,
+        lv_time  TYPE utime,
+        lv_objid TYPE c LENGTH 20,
+        lv_inact TYPE jest-inact,
+        lv_vornr TYPE vornr.
 
   "---------------------------------------------------
   " Classification object (equipment or functional location)
   "---------------------------------------------------
   IF ps_order-equnr IS NOT INITIAL.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
   ELSE.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-tplnr.
   ENDIF.
   IF lv_obj IS INITIAL.
     RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " Detect current system statuses
+  " Step 4.1: Status check (REL or TECO required)
   "---------------------------------------------------
-  DATA lt_status TYPE TABLE OF jest.
-  DATA ls_status LIKE LINE OF lt_status.
-
-  SELECT stat, inact
+  SELECT SINGLE stat
+    INTO lv_stat
     FROM jest
-    INTO TABLE @lt_status
-    WHERE objnr = @ps_order-objnr.
-
-  LOOP AT lt_status INTO ls_status.
-    CASE ls_status-stat.
-      WHEN 'I0002'. IF ls_status-inact IS INITIAL. lv_has_rel  = abap_true. ENDIF. " REL
-      WHEN 'I0045'. IF ls_status-inact IS INITIAL. lv_has_teco = abap_true. ENDIF. " TECO
-      WHEN 'I0043'. IF ls_status-inact IS INITIAL. lv_has_lkd  = abap_true. ENDIF. " LKD
-      WHEN 'E0014'. IF ls_status-inact IS INITIAL. lv_has_cmxs = abap_true. ENDIF. " CMXS
-      WHEN 'E0010'. IF ls_status-inact IS INITIAL. lv_has_cmxc = abap_true. ENDIF. " CMXC
-    ENDCASE.
-  ENDLOOP.
-
-  "---------------------------------------------------
-  " Must have REL or TECO
-  "---------------------------------------------------
-  IF lv_has_rel = abap_false AND lv_has_teco = abap_false.
-    RETURN.
+   WHERE objnr = ps_order-objnr
+     AND stat IN ('I0002', 'I0045') " REL, TECO
+     AND inact = ''.
+  IF sy-subrc <> 0.
+    RETURN. " Not valid (no REL/TECO)
   ENDIF.
 
   "---------------------------------------------------
-  " Interface characteristic must be CMX
+  " Step 4.2/4.3: CMXC (E0010) handling per boss rule
   "---------------------------------------------------
-  SELECT SINGLE atwrt INTO @lv_value
-    FROM ausp
-   WHERE objek = @lv_obj
-     AND atinn = @gv_atinn.
-  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
-    RETURN.
-  ENDIF.
+  SELECT SINGLE inact
+    INTO lv_inact
+    FROM jest
+   WHERE objnr = ps_order-objnr
+     AND stat  = 'E0010'. " CMXC confirmed
 
-  "---------------------------------------------------
-  " LKD + no CMXS → skip
-  "---------------------------------------------------
-  IF lv_has_lkd = abap_true AND lv_has_cmxs = abap_false.
-    RETURN.
-  ENDIF.
+  IF sy-subrc = 0 AND lv_inact IS INITIAL.
+    " CMXC active → check if TECO exists
+    DATA(lv_teco_found) = abap_false.
 
-  "---------------------------------------------------
-  " CMXS exists → compare LKD/UNLKD vs CMXS timestamps
-  "---------------------------------------------------
-  IF lv_has_cmxs = abap_true.
+    SELECT SINGLE stat
+      FROM jest
+      INTO lv_stat
+      WHERE objnr = ps_order-objnr
+        AND stat  = 'I0045' " TECO
+        AND inact = ''.
 
-    CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+    IF sy-subrc = 0.
+      lv_teco_found = abap_true.
+    ENDIF.
 
-    " Last CMXS change
-    SELECT MAX( udate ) , MAX( utime )
-      INTO ( @lv_cmxs_date , @lv_cmxs_time )
-      FROM cdhdr
-     WHERE objectclas = 'ORDER'
-       AND objectid    = @lv_objid.
-
-    " Latest LKD change
-    SELECT MAX( udate ) , MAX( utime )
-      INTO ( @lv_lock_date , @lv_lock_time )
-      FROM cdhdr
-     WHERE objectclas = 'STATUS'
-       AND objectid    = @ps_order-objnr
-       AND ( tcode = 'I0043' OR tcode = 'LOCK' ).
-
-    " Compare timestamps
-    IF ( lv_lock_date IS INITIAL ) OR
-       ( lv_lock_date < lv_cmxs_date ) OR
-       ( lv_lock_date = lv_cmxs_date AND lv_lock_time <= lv_cmxs_time ).
+    " Skip only if CMXC active and no TECO
+    IF lv_teco_found = abap_false.
       RETURN.
     ENDIF.
   ENDIF.
 
   "---------------------------------------------------
-  " Determine display status
+  " Step 4.4: INTERFACE must be CMX
   "---------------------------------------------------
-  IF lv_has_lkd = abap_true.
-    lv_stat = 'I0043'. " Locked
-  ELSEIF lv_has_teco = abap_true.
-    lv_stat = 'I0045'. " TECO
-  ELSE.
-    lv_stat = 'I0002'. " REL
+  SELECT SINGLE atwrt
+    INTO lv_value
+    FROM ausp
+   WHERE objek = lv_obj
+     AND atinn = gv_atinn.
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+    RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " Get operation and prepare output
+  " Step 5: Change detection (CDHDR + CMXS logic)
+  "---------------------------------------------------
+  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+
+  SELECT MAX( udate ) MAX( utime )
+    INTO (lv_date, lv_time)
+    FROM cdhdr
+   WHERE objectclas = 'ORDER'
+     AND objectid    = lv_objid.
+
+  IF ( lv_date < so_date-low OR
+       ( lv_date = so_date-low AND lv_time < so_time-low ) ).
+
+    " Check if CMXS (E0014) already set
+    SELECT SINGLE stat
+      INTO lv_stat
+      FROM jest
+     WHERE objnr = ps_order-objnr
+       AND stat  = 'E0014' " Sent to CMX
+       AND inact = ''.
+
+    IF sy-subrc = 0.
+      RETURN. " Already sent -> skip
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 4.5: Lock/Unlock handling (I0043)
+  "---------------------------------------------------
+  SELECT SINGLE inact
+    INTO lv_inact
+    FROM jest
+   WHERE objnr = ps_order-objnr
+     AND stat  = 'I0043'. " Locked
+  IF sy-subrc = 0.
+    IF lv_inact IS INITIAL.
+      lv_stat = 'I0043'. " Locked
+    ELSE.
+      lv_stat = 'I0002'. " Unlocked -> treat as Released
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 7: Get first valid operation
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+
+  "---------------------------------------------------
+  " Prepare output
+  "---------------------------------------------------
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
@@ -332,14 +341,7 @@ FORM f_prepare_output USING ps_order TYPE viaufkst
 
   CLEAR gs_output.
 
-  "---------------------------------------------------
-  " Always CREATE per functional specification
-  "---------------------------------------------------
-  gs_output-OrderMessageStatus = 'CREATE'.
-
-  "---------------------------------------------------
-  " Core order information
-  "---------------------------------------------------
+  gs_output-OrderMessageStatus        = 'CREATE'.
   gs_output-Plant                     = ps_order-iwerk.
   gs_output-MaintenanceOrder          = ps_order-aufnr.
   gs_output-MaintenanceOrderOperation = pv_vornr.
@@ -349,31 +351,51 @@ FORM f_prepare_output USING ps_order TYPE viaufkst
   gs_output-SystemId                  = sy-sysid.
 
   "---------------------------------------------------
-  " Determine readable System Status text (REL, TECO, LKD)
+  " Determine final system status text
   "---------------------------------------------------
-  SELECT SINGLE txt04 INTO gs_output-SystemStatusText
-    FROM tj02t
-   WHERE istat = pv_stat
-     AND spras = 'E'.
+  DATA(lv_teco_active) = abap_false.
+  DATA(lv_cmx_active)  = abap_false.
 
-  "---------------------------------------------------
-  " Technical Object (Equipment or Functional Location)
-  "---------------------------------------------------
+  " Check if TECO active
+  SELECT SINGLE stat
+    INTO @DATA(lv_teco_stat)
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'I0045'
+     AND inact = ''.
+  IF sy-subrc = 0.
+    lv_teco_active = abap_true.
+  ENDIF.
+
+  " Check if CMXC active
+  SELECT SINGLE stat
+    INTO @DATA(lv_cmx_stat)
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'E0010'
+     AND inact = ''.
+  IF sy-subrc = 0.
+    lv_cmx_active = abap_true.
+  ENDIF.
+
+  " Determine text to show
+  IF lv_cmx_active = abap_true AND lv_teco_active = abap_true.
+    gs_output-SystemStatusText = 'TECO'.
+  ELSE.
+    " Otherwise use standard status text
+    SELECT SINGLE txt04
+      INTO gs_output-SystemStatusText
+      FROM tj02t
+     WHERE istat = pv_stat
+       AND spras = 'E'.
+  ENDIF.
+
+  " Technical object (equipment or functional location)
   IF ps_order-equnr IS NOT INITIAL.
     gs_output-TechnicalObject = ps_order-equnr.
   ELSE.
     gs_output-TechnicalObject = ps_order-tplnr.
   ENDIF.
-
-  "---------------------------------------------------
-  " Message text for ALV/log visibility
-  "---------------------------------------------------
-  CASE pv_stat.
-    WHEN 'I0043'. gs_output-Msg = 'Order locked – sent as CREATE to CMX'.
-    WHEN 'I0045'. gs_output-Msg = 'Order TECO – sent as CREATE to CMX'.
-    WHEN 'I0002'. gs_output-Msg = 'Order REL – sent as CREATE to CMX'.
-    WHEN OTHERS.  gs_output-Msg = 'Order sent as CREATE to CMX'.
-  ENDCASE.
 
   APPEND gs_output TO gt_output.
 
