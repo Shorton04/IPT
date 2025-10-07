@@ -1,126 +1,80 @@
+*&---------------------------------------------------------------------*
+*& Include          ZIN_CMX_WORKORDER_TOP
+*&---------------------------------------------------------------------*
+
+CONSTANTS:
+  c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
+  c_stat_teco TYPE jest-stat VALUE 'I0045',   "Technically Completed
+  c_stat_lkd  TYPE jest-stat VALUE 'I0043',   "Locked
+  c_stat_cmxc TYPE jest-stat VALUE 'E0010',   "CMX Confirmed
+  c_stat_cmxs TYPE jest-stat VALUE 'E0014'.   "Sent to CMX
+
+
 *---------------------------------------------------------------------*
-* Check order statuses and eligibility (with LKD/UNLKD logic)
+* Type Definitions
 *---------------------------------------------------------------------*
-FORM f_check_status USING ps_order TYPE viaufkst.
 
-  DATA: lv_obj        TYPE cuobj,
-        lv_value      TYPE atwrt,
-        lv_vornr      TYPE vornr,
-        lv_stat       TYPE jest-stat,
-        lv_has_rel    TYPE abap_bool VALUE abap_false,
-        lv_has_teco   TYPE abap_bool VALUE abap_false,
-        lv_has_lkd    TYPE abap_bool VALUE abap_false,
-        lv_has_cmxs   TYPE abap_bool VALUE abap_false,
-        lv_has_cmxc   TYPE abap_bool VALUE abap_false,
-        lv_lock_date  TYPE udate,
-        lv_lock_time  TYPE utime,
-        lv_cmxs_date  TYPE udate,
-        lv_cmxs_time  TYPE utime,
-        lv_objid      TYPE c LENGTH 20.
+"--- Output structure for ALV display
+TYPES: BEGIN OF ty_output,
+         OrderMessageStatus        TYPE char10,
+         Plant                     TYPE werks_d,
+         MaintenanceOrder          TYPE aufnr,
+         MaintenanceOrderOperation TYPE vornr,
+         SystemStatusText          TYPE char40,
+         TechnicalObject           TYPE char30,
+         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,
+         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,
+         LatestAcceptableComplDate TYPE viaufkst-lacd_date,
+         SystemId                  TYPE sy-sysid,
+         Msg                       TYPE char72,
+       END OF ty_output.
 
-  "---------------------------------------------------
-  " Classification object (equipment or functional location)
-  "---------------------------------------------------
-  IF ps_order-equnr IS NOT INITIAL.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
-  ELSE.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
-  ENDIF.
-  IF lv_obj IS INITIAL.
-    RETURN.
-  ENDIF.
+"--- Prefetch helper structures
+TYPES: BEGIN OF ty_jest_data,
+         objnr TYPE jest-objnr,
+         stat  TYPE jest-stat,
+         inact TYPE jest-inact,
+       END OF ty_jest_data.
 
-  "---------------------------------------------------
-  " Detect current system statuses
-  "---------------------------------------------------
-  DATA lt_status TYPE TABLE OF jest.
-  DATA ls_status LIKE LINE OF lt_status.
+TYPES: BEGIN OF ty_inob_data,
+         objek TYPE inob-objek,
+         cuobj TYPE inob-cuobj,
+       END OF ty_inob_data.
 
-  SELECT stat, inact
-    FROM jest
-    INTO TABLE @lt_status
-    WHERE objnr = @ps_order-objnr.
+TYPES: BEGIN OF ty_ausp_data,
+         objek TYPE ausp-objek,
+         atinn TYPE ausp-atinn,
+         atwrt TYPE ausp-atwrt,
+       END OF ty_ausp_data.
 
-  LOOP AT lt_status INTO ls_status.
-    CASE ls_status-stat.
-      WHEN 'I0002'. IF ls_status-inact IS INITIAL. lv_has_rel  = abap_true. ENDIF. " REL
-      WHEN 'I0045'. IF ls_status-inact IS INITIAL. lv_has_teco = abap_true. ENDIF. " TECO
-      WHEN 'I0043'. IF ls_status-inact IS INITIAL. lv_has_lkd  = abap_true. ENDIF. " LKD
-      WHEN 'E0014'. IF ls_status-inact IS INITIAL. lv_has_cmxs = abap_true. ENDIF. " CMXS
-      WHEN 'E0010'. IF ls_status-inact IS INITIAL. lv_has_cmxc = abap_true. ENDIF. " CMXC
-    ENDCASE.
-  ENDLOOP.
+TYPES: BEGIN OF ty_cdhdr_data,
+         objectid TYPE cdhdr-objectid,
+         udate    TYPE cdhdr-udate,
+         utime    TYPE cdhdr-utime,
+       END OF ty_cdhdr_data.
 
-  "---------------------------------------------------
-  " Must have REL or TECO
-  "---------------------------------------------------
-  IF lv_has_rel = abap_false AND lv_has_teco = abap_false.
-    RETURN.
-  ENDIF.
 
-  "---------------------------------------------------
-  " Interface characteristic must be CMX
-  "---------------------------------------------------
-  SELECT SINGLE atwrt INTO @lv_value
-    FROM ausp
-   WHERE objek = @lv_obj
-     AND atinn = @gv_atinn.
-  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
-    RETURN.
-  ENDIF.
+*---------------------------------------------------------------------*
+* Data Declarations
+*---------------------------------------------------------------------*
 
-  "---------------------------------------------------
-  " LKD + no CMXS → skip
-  "---------------------------------------------------
-  IF lv_has_lkd = abap_true AND lv_has_cmxs = abap_false.
-    RETURN.
-  ENDIF.
+"--- Main output
+DATA: gt_output TYPE TABLE OF ty_output,
+      gs_output TYPE ty_output.
 
-  "---------------------------------------------------
-  " CMXS exists → compare LKD/UNLKD vs CMXS timestamps
-  "---------------------------------------------------
-  IF lv_has_cmxs = abap_true.
+"--- Orders
+DATA: gt_orders TYPE TABLE OF viaufkst,
+      gs_order  TYPE viaufkst.
 
-    CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+"--- Prefetched master data tables
+DATA: gt_jest  TYPE TABLE OF ty_jest_data,
+      gs_jest  TYPE ty_jest_data,
+      gt_inob  TYPE TABLE OF ty_inob_data,
+      gs_inob  TYPE ty_inob_data,
+      gt_ausp  TYPE TABLE OF ty_ausp_data,
+      gs_ausp  TYPE ty_ausp_data,
+      gt_cdhdr TYPE TABLE OF ty_cdhdr_data,
+      gs_cdhdr TYPE ty_cdhdr_data.
 
-    " Last CMXS change
-    SELECT MAX( udate ) , MAX( utime )
-      INTO ( @lv_cmxs_date , @lv_cmxs_time )
-      FROM cdhdr
-     WHERE objectclas = 'ORDER'
-       AND objectid    = @lv_objid.
-
-    " Latest LKD change
-    SELECT MAX( udate ) , MAX( utime )
-      INTO ( @lv_lock_date , @lv_lock_time )
-      FROM cdhdr
-     WHERE objectclas = 'STATUS'
-       AND objectid    = @ps_order-objnr
-       AND ( tcode = 'I0043' OR tcode = 'LOCK' ).
-
-    " Compare timestamps
-    IF ( lv_lock_date IS INITIAL ) OR
-       ( lv_lock_date < lv_cmxs_date ) OR
-       ( lv_lock_date = lv_cmxs_date AND lv_lock_time <= lv_cmxs_time ).
-      RETURN.
-    ENDIF.
-  ENDIF.
-
-  "---------------------------------------------------
-  " Determine display status
-  "---------------------------------------------------
-  IF lv_has_lkd = abap_true.
-    lv_stat = 'I0043'. " Locked
-  ELSEIF lv_has_teco = abap_true.
-    lv_stat = 'I0045'. " TECO
-  ELSE.
-    lv_stat = 'I0002'. " REL
-  ENDIF.
-
-  "---------------------------------------------------
-  " Get operation and prepare output
-  "---------------------------------------------------
-  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-
-ENDFORM.
+"--- Misc
+DATA: gv_atinn TYPE atinn.   "INTERFACE characteristic ID
