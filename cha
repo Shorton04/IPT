@@ -8,36 +8,19 @@ END-OF-SELECTION.
     EXIT.
   ENDIF.
 
-  "-------------------------------------------
-  " Run sending or simulation
-  "-------------------------------------------
   IF p_test IS INITIAL.
-    PERFORM f_send_cmx.     " Live mode (includes CMXS updates)
-    PERFORM f_send_to_cpi.  " Send JSON payload to CPI
+    PERFORM f_send_cmx.     " LIVE mode
+    PERFORM f_send_to_cpi.  " Send JSON payload
   ELSE.
-    PERFORM f_send_cmx.     " Test mode (simulated sends only)
+    PERFORM f_send_cmx.     " TEST mode (simulate)
   ENDIF.
 
-  "-------------------------------------------
-  " Show only relevant output in ALV
-  "-------------------------------------------
-  DATA: lt_sent TYPE TABLE OF ty_output.
-
-  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_row>).
-    IF <ls_row>-msg CS 'sent'
-    OR <ls_row>-msg CS 'CPI success'
-    OR <ls_row>-msg CS 'CPI error'
-    OR <ls_row>-msg CS 'Locked'
-    OR <ls_row>-msg CS 'Unlocked'
-    OR <ls_row>-msg CS '[Test Mode]'.
-      APPEND <ls_row> TO lt_sent.
-    ENDIF.
-  ENDLOOP.
-
-  gt_output = lt_sent.
+  " Show only relevant results
+  DELETE gt_output WHERE msg IS INITIAL.
+  DELETE gt_output WHERE msg CS 'Skipped' AND p_test IS INITIAL.
 
   IF gt_output IS INITIAL.
-    WRITE: / 'No orders were sent to CMX.'.
+    WRITE: / 'No orders to display in ALV (nothing to send).'.
   ELSE.
     PERFORM f_display.
   ENDIF.
@@ -45,29 +28,20 @@ END-OF-SELECTION.
 
 
 *---------------------------------------------------------------------*
-* Update SAP status (CMXS) and simulate/send to CPI
+* FORM f_send_cmx — Update CMXS or simulate in TEST mode
 *---------------------------------------------------------------------*
 FORM f_send_cmx.
 
-  DATA lv_mode TYPE char10.
+  DATA(lv_mode) = COND string( WHEN p_test = abap_true THEN 'TEST' ELSE 'LIVE' ).
 
-  IF p_test = abap_true.
-    lv_mode = 'TEST'.
-  ELSE.
-    lv_mode = 'LIVE'.
-  ENDIF.
+  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_row>).
 
-  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
-
-    "---------------------------------------------------
-    " Determine if order already has CMXS
-    "---------------------------------------------------
     DATA(lv_already_sent) = abap_false.
 
     SELECT SINGLE stat
       FROM jest
-      WHERE objnr = ( SELECT objnr FROM aufk WHERE aufnr = @<ls_output_row>-MaintenanceOrder )
-        AND stat  = 'E0014'    " CMXS
+      WHERE objnr = ( SELECT objnr FROM aufk WHERE aufnr = @<ls_row>-MaintenanceOrder )
+        AND stat  = 'E0014'   " CMXS
         AND inact = ''
       INTO @DATA(lv_dummy).
 
@@ -76,36 +50,34 @@ FORM f_send_cmx.
     ENDIF.
 
     "---------------------------------------------------
-    " Skip rules:
-    " 1. Locked but never sent -> skip
-    " 2. TECO but already sent -> skip
+    " Skip: Locked never CMXS or TECO already CMXS
     "---------------------------------------------------
-    IF ( <ls_output_row>-SystemStatusText = 'LOCKED' AND lv_already_sent = abap_false )
-     OR ( <ls_output_row>-SystemStatusText = 'TECO'   AND lv_already_sent = abap_true ).
-      <ls_output_row>-msg = |Skipped: { <ls_output_row>-SystemStatusText } order|.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
+    IF ( <ls_row>-SystemStatusText = 'LOCKED' AND lv_already_sent = abap_false )
+     OR ( <ls_row>-SystemStatusText = 'TECO' AND lv_already_sent = abap_true ).
+      <ls_row>-msg = |Skipped: { <ls_row>-SystemStatusText } order { <ls_row>-MaintenanceOrder }|.
+      PERFORM f_write_log USING <ls_row>-MaintenanceOrder
+                                 <ls_row>-MaintenanceOrderOperation
+                                 <ls_row>-Plant
                                  'CMXS'
-                                 <ls_output_row>-msg.
+                                 <ls_row>-msg.
       CONTINUE.
     ENDIF.
 
     "---------------------------------------------------
-    " TEST mode → simulate without actual BAPI call
+    " TEST mode — simulate send only
     "---------------------------------------------------
     IF lv_mode = 'TEST'.
-      <ls_output_row>-msg = |[Test Mode] Would send CMXS to CPI for order { <ls_output_row>-MaintenanceOrder } ({ <ls_output_row>-SystemStatusText })|.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
+      <ls_row>-msg = |[Test Mode] Would send CMXS for { <ls_row>-MaintenanceOrder } ({ <ls_row>-SystemStatusText })|.
+      PERFORM f_write_log USING <ls_row>-MaintenanceOrder
+                                 <ls_row>-MaintenanceOrderOperation
+                                 <ls_row>-Plant
                                  'CMXS'
-                                 <ls_output_row>-msg.
+                                 <ls_row>-msg.
       CONTINUE.
     ENDIF.
 
     "---------------------------------------------------
-    " LIVE mode → perform actual update via BAPI
+    " LIVE mode — perform BAPI update
     "---------------------------------------------------
     DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
           lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
@@ -115,27 +87,16 @@ FORM f_send_cmx.
 
     CLEAR: lt_header, lt_status, lt_methods, lt_return.
 
-    " Header
-    APPEND VALUE #( orderid = <ls_output_row>-MaintenanceOrder ) TO lt_header.
-
-    " User Status: always set CMXS (send marker)
+    APPEND VALUE #( orderid = <ls_row>-MaintenanceOrder ) TO lt_header.
     APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu ) TO lt_status.
 
-    " BAPI methods
-    APPEND VALUE #( refnumber = '00001'
-                    objecttype = 'HEADER'
-                    method = 'CHANGE'
-                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
-    APPEND VALUE #( refnumber = '00001'
-                    objecttype = 'USERSTATUS'
-                    method = 'CHANGE'
-                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
-    APPEND VALUE #( refnumber = '00003'
-                    objecttype = 'ORDER'
-                    method = 'SAVE'
-                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00001' objecttype = 'HEADER'
+                    method = 'CHANGE' objectkey = <ls_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS'
+                    method = 'CHANGE' objectkey = <ls_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00003' objecttype = 'ORDER'
+                    method = 'SAVE' objectkey = <ls_row>-MaintenanceOrder ) TO lt_methods.
 
-    " Call BAPI
     CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
       TABLES
         it_header     = lt_header
@@ -145,20 +106,18 @@ FORM f_send_cmx.
 
     READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
     IF sy-subrc = 0.
-      <ls_output_row>-msg = ls_return-message(72).
+      <ls_row>-msg = ls_return-message(72).
       CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
     ELSE.
-      <ls_output_row>-msg = 'Sent to CMX (CMXS set)'.
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING
-          wait = 'X'.
+      <ls_row>-msg = 'Sent to CMX (CMXS set)'.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
     ENDIF.
 
-    PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                               <ls_output_row>-MaintenanceOrderOperation
-                               <ls_output_row>-Plant
+    PERFORM f_write_log USING <ls_row>-MaintenanceOrder
+                               <ls_row>-MaintenanceOrderOperation
+                               <ls_row>-Plant
                                'CMXS'
-                               <ls_output_row>-msg.
+                               <ls_row>-msg.
 
   ENDLOOP.
 
@@ -169,109 +128,139 @@ ENDFORM.
 
 
 *---------------------------------------------------------------------*
-* Check status (REL / TECO / LOCKED / CMXS)
+* FORM f_check_status — Include only relevant orders
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
-  DATA: lv_obj   TYPE cuobj,
-        lv_value TYPE atwrt,
-        lv_stat  TYPE jest-stat,
-        lv_date  TYPE udate,
-        lv_time  TYPE utime,
-        lv_objid TYPE c LENGTH 20,
-        lv_inact TYPE jest-inact,
-        lv_vornr TYPE vornr.
+  DATA: lv_stat        TYPE jest-stat,
+        lv_cmxs_active TYPE abap_bool,
+        lv_cmxs_date   TYPE udate,
+        lv_cmxs_time   TYPE utime,
+        lv_lastchg_d   TYPE udate,
+        lv_lastchg_t   TYPE utime,
+        lv_objid       TYPE char20,
+        lv_obj         TYPE cuobj,
+        lv_value       TYPE atwrt.
 
-  "---------------------------------------------------
-  " Determine classification object
-  "---------------------------------------------------
+  " Classification object
   IF ps_order-equnr IS NOT INITIAL.
     SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
   ELSE.
     SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
   ENDIF.
-  IF lv_obj IS INITIAL.
-    RETURN.
-  ENDIF.
+  IF lv_obj IS INITIAL. RETURN. ENDIF.
 
-  "---------------------------------------------------
-  " Check REL / TECO status
-  "---------------------------------------------------
-  SELECT SINGLE stat
-    INTO @lv_stat
+  " REL / TECO only
+  SELECT SINGLE stat INTO @lv_stat
     FROM jest
    WHERE objnr = @ps_order-objnr
-     AND stat IN ('I0002','I0045')   " REL or TECO
+     AND stat IN ('I0002','I0045')
      AND inact = ''.
-  IF sy-subrc <> 0.
-    RETURN.
-  ENDIF.
+  IF sy-subrc <> 0. RETURN. ENDIF.
 
-  "---------------------------------------------------
-  " Skip REL orders already CMXS (no change since)
-  "---------------------------------------------------
-  DATA(lv_cmxs_active) = abap_false.
-
-  SELECT SINGLE stat
-    INTO @lv_stat
+  " CMXS status info
+  lv_cmxs_active = abap_false.
+  SELECT SINGLE stat, chg_date, chg_time
+    INTO (@lv_stat, @lv_cmxs_date, @lv_cmxs_time)
     FROM jest
-   WHERE objnr = @ps_order-objnr
-     AND stat  = 'E0014'   " CMXS active
-     AND inact = ''.
+    WHERE objnr = @ps_order-objnr
+      AND stat  = 'E0014'
+      AND inact = ''.
+  IF sy-subrc = 0. lv_cmxs_active = abap_true. ENDIF.
 
-  IF sy-subrc = 0.
-    lv_cmxs_active = abap_true.
-  ENDIF.
-
-  " Get last change date/time (CDHDR)
+  " Last change
   CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-  SELECT MAX( udate ) AS max_date,
-         MAX( utime ) AS max_time
-    INTO ( @lv_date, @lv_time )
+  SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
+    INTO ( @lv_lastchg_d, @lv_lastchg_t )
     FROM cdhdr
    WHERE objectclas = 'ORDER'
      AND objectid    = @lv_objid.
 
+  " Skip REL + CMXS no new change
   IF lv_cmxs_active = abap_true
-     AND ( lv_date < so_date-low
-        OR ( lv_date = so_date-low AND lv_time <= so_time-low ) ).
-    RETURN. " Skip old REL + CMXS
-  ENDIF.
-
-  "---------------------------------------------------
-  " Check INTERFACE = CMX
-  "---------------------------------------------------
-  SELECT SINGLE atwrt
-    INTO @lv_value
-    FROM ausp
-   WHERE objek = @lv_obj
-     AND atinn = @gv_atinn.
-
-  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+     AND ( lv_lastchg_d IS INITIAL
+        OR lv_lastchg_d < lv_cmxs_date
+        OR ( lv_lastchg_d = lv_cmxs_date AND lv_lastchg_t <= lv_cmxs_time ) ).
     RETURN.
   ENDIF.
 
-  "---------------------------------------------------
+  " INTERFACE must be CMX
+  SELECT SINGLE atwrt INTO @lv_value
+    FROM ausp
+   WHERE objek = @lv_obj
+     AND atinn = @gv_atinn.
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'. RETURN. ENDIF.
+
   " Lock/Unlock handling
-  "---------------------------------------------------
-  SELECT SINGLE inact
-    INTO @lv_inact
+  SELECT SINGLE inact INTO @DATA(lv_inact)
     FROM jest
    WHERE objnr = @ps_order-objnr
-     AND stat  = 'I0043'. " Locked
-
+     AND stat  = 'I0043'.
   IF sy-subrc = 0.
     IF lv_inact IS INITIAL.
-      lv_stat = 'I0043'. " Active lock
+      lv_stat = 'I0043'. " Locked
     ELSE.
-      lv_stat = 'I0002'. " Unlock back to REL
+      lv_stat = 'I0002'. " Unlocked → REL
     ENDIF.
   ENDIF.
 
-  "---------------------------------------------------
-  " Determine operation and prepare output
-  "---------------------------------------------------
-  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+  PERFORM f_get_operation USING ps_order CHANGING DATA(lv_vornr).
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+
+ENDFORM.
+
+
+
+*---------------------------------------------------------------------*
+* FORM f_prepare_output — Build ALV output entry
+*---------------------------------------------------------------------*
+FORM f_prepare_output USING ps_order TYPE viaufkst
+                            pv_vornr TYPE vornr
+                            pv_stat  TYPE jest-stat.
+
+  DATA(ls_out) = VALUE ty_output(
+      OrderMessageStatus        = 'CREATE'
+      Plant                     = ps_order-werks
+      MaintenanceOrder           = ps_order-aufnr
+      MaintenanceOrderOperation  = pv_vornr
+      TechnicalObject            = ps_order-equnr
+      SystemStatusText           = SWITCH #( pv_stat
+                                             WHEN 'I0002' THEN 'REL'
+                                             WHEN 'I0045' THEN 'TECO'
+                                             WHEN 'I0043' THEN 'LOCKED'
+                                             ELSE 'REL' )
+      MaintOrdBasicStartDate     = ps_order-gstrp
+      MaintOrdBasicEndDate       = ps_order-gltrp
+      LatestAcceptableComplDate  = ps_order-gltlt
+      SystemId                   = 'T30' ).
+
+  APPEND ls_out TO gt_output.
+
+ENDFORM.
+
+
+
+*---------------------------------------------------------------------*
+* FORM f_send_to_cpi — JSON payload via CPI
+*---------------------------------------------------------------------*
+FORM f_send_to_cpi.
+
+  DATA: lv_payload TYPE string,
+        lv_result  TYPE string.
+
+  TRY.
+      lv_payload = xco_ku_json=>data->from_abap( gt_output )
+                    ->apply( VALUE #( ( xco_ku_json=>transformation->underscore_to_pascal_case ) ) )
+                    ->to_string( ).
+
+      CALL FUNCTION 'ZCPI_SEND_HTTP'
+        EXPORTING
+          iv_json = lv_payload
+        IMPORTING
+          ev_result = lv_result.
+
+    CATCH cx_root INTO DATA(lx_err).
+      WRITE: / 'CPI Error:', lx_err->get_text( ).
+  ENDTRY.
 
 ENDFORM.
