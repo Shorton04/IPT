@@ -1,17 +1,76 @@
+*---------------------------------------------------------------------*
+* Prefetch related master data (classic syntax for ECC/S4)
+*---------------------------------------------------------------------*
+FORM f_prefetch_data.
+
+  IF gt_orders IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  DATA: lt_objek     TYPE TABLE OF inob-objek,
+        lt_objnr     TYPE TABLE OF jest-objnr,
+        lt_objectid  TYPE TABLE OF cdhdr-objectid,
+        lt_cuobj     TYPE TABLE OF inob-cuobj,
+        lv_objid     TYPE cdhdr-objectid.
+
+  LOOP AT gt_orders INTO gs_order.
+    IF gs_order-equnr IS NOT INITIAL.
+      APPEND gs_order-equnr TO lt_objek.
+    ENDIF.
+
+    IF gs_order-tplnr IS NOT INITIAL.
+      APPEND gs_order-tplnr TO lt_objek.
+    ENDIF.
+
+    APPEND gs_order-objnr TO lt_objnr.
+
+    CONCATENATE sy-mandt '30' gs_order-aufnr INTO lv_objid.
+    APPEND lv_objid TO lt_objectid.
+  ENDLOOP.
+
+  SORT lt_objek.     DELETE ADJACENT DUPLICATES FROM lt_objek.
+  SORT lt_objnr.     DELETE ADJACENT DUPLICATES FROM lt_objnr.
+  SORT lt_objectid.  DELETE ADJACENT DUPLICATES FROM lt_objectid.
+
+  "----------------------------------------------------------
+  " 1) JEST statuses
+  "----------------------------------------------------------
+  IF lt_objnr IS NOT INITIAL.
+    SELECT objnr stat inact
+      INTO TABLE gt_jest
+      FROM jest
+      FOR ALL ENTRIES IN lt_objnr
+      WHERE objnr = lt_objnr-table_line.
+  ENDIF.
+
+  "----------------------------------------------------------
+  " 2) INOB classification links
+  "----------------------------------------------------------
+  IF lt_objek IS NOT INITIAL.
+    SELECT objek cuobj
+      INTO TABLE gt_inob
+      FROM inob
+      FOR ALL ENTRIES IN lt_objek
+      WHERE objek = lt_objek-table_line.
+  ENDIF.
+
   "----------------------------------------------------------
   " 3) AUSP characteristics (for CUOBJ)
   "----------------------------------------------------------
   IF gt_inob IS NOT INITIAL.
-    LOOP AT gt_inob INTO DATA(ls_inob).
-      APPEND ls_inob-cuobj TO lt_cuobj.
+    LOOP AT gt_inob INTO gs_inob.
+      APPEND gs_inob-cuobj TO lt_cuobj.
     ENDLOOP.
-    DELETE ADJACENT DUPLICATES FROM lt_cuobj.
 
-    SELECT objek atinn atwrt
-      FROM ausp
-      INTO TABLE @gt_ausp
-      FOR ALL ENTRIES IN @lt_cuobj
-      WHERE objek = @CONV( ausp-objek( lt_cuobj-table_line ) ).
+    SORT lt_cuobj. DELETE ADJACENT DUPLICATES FROM lt_cuobj.
+
+    IF lt_cuobj IS NOT INITIAL.
+      SELECT objek atinn atwrt
+        INTO TABLE gt_ausp
+        FROM ausp
+        FOR ALL ENTRIES IN lt_cuobj
+        WHERE objek = lt_cuobj-table_line.
+    ENDIF.
   ENDIF.
 
   "----------------------------------------------------------
@@ -19,11 +78,11 @@
   "----------------------------------------------------------
   IF lt_objectid IS NOT INITIAL.
     SELECT objectid udate utime
+      INTO TABLE gt_cdhdr
       FROM cdhdr
-      INTO TABLE @gt_cdhdr
-      FOR ALL ENTRIES IN @lt_objectid
+      FOR ALL ENTRIES IN lt_objectid
       WHERE objectclas = 'ORDER'
-        AND objectid   = @lt_objectid-table_line.
+        AND objectid   = lt_objectid-table_line.
   ENDIF.
 
 ENDFORM.
