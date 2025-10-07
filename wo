@@ -16,8 +16,8 @@ INCLUDE zin_cmx_workorder_f01.
 START-OF-SELECTION.
 
   PERFORM f_get_orders.          "Fetch orders
-  PERFORM f_prefetch_data.
-  PERFORM f_process_orders.
+  PERFORM f_prefetch_data.       "Prefetch master data
+  PERFORM f_process_orders.      "Apply logic and filtering
 
 *-------------------------------------------------------------*
 *  END-OF-SELECTION
@@ -26,10 +26,10 @@ END-OF-SELECTION.
 
   IF gt_output IS NOT INITIAL.
     IF p_test IS INITIAL.
-      PERFORM f_send_cmx.          "Update user status in SAP
+      PERFORM f_send_cmx.          "Update SAP user status
       PERFORM f_send_to_cpi.       "Send JSON payload to CPI
     ENDIF.
-    PERFORM f_display.           "Show ALV
+    PERFORM f_display.             "Display ALV
   ELSE.
     WRITE: / 'No matching orders found.'.
   ENDIF.
