@@ -1,36 +1,21 @@
-*&---------------------------------------------------------------------*
-*& Report ZIN_CMX_WORKORDER
-*&---------------------------------------------------------------------*
 REPORT zin_cmx_workorder.
 
-*----------------------------------------------------------------------*
-*                           Includes                                   *
-*----------------------------------------------------------------------*
 INCLUDE zin_cmx_workorder_top.
 INCLUDE zin_cmx_workorder_sel.
 INCLUDE zin_cmx_workorder_f01.
 
-*-------------------------------------------------------------*
-*  START-OF-SELECTION
-*-------------------------------------------------------------*
 START-OF-SELECTION.
+  PERFORM f_get_orders.
+  PERFORM f_prefetch_data.     "Prefetch JEST, INOB, AUSP, CDHDR
+  PERFORM f_process_orders.    "Loop inside routine
 
-  PERFORM f_get_orders.          "Fetch orders
-  LOOP AT gt_orders INTO gs_order.
-    PERFORM f_check_status USING gs_order.
-  ENDLOOP.
-
-*-------------------------------------------------------------*
-*  END-OF-SELECTION
-*-------------------------------------------------------------*
 END-OF-SELECTION.
-
   IF gt_output IS NOT INITIAL.
     IF p_test IS INITIAL.
-      PERFORM f_send_cmx.          "Update user status in SAP
-      PERFORM f_send_to_cpi.       "Send JSON payload to CPI
+      PERFORM f_send_cmx.
+      PERFORM f_send_to_cpi.
     ENDIF.
-    PERFORM f_display.           "Show ALV
+    PERFORM f_display.
   ELSE.
     WRITE: / 'No matching orders found.'.
   ENDIF.
