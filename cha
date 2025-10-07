@@ -17,13 +17,21 @@ END-OF-SELECTION.
   ENDIF.
 
   "-------------------------------------------------------
-  " Show only those actually sent to CMX (based on message)
+  " Keep only records that were actually sent to CMX
   "-------------------------------------------------------
-  DELETE gt_output WHERE msg NOT CP '*sent*'
-                     AND msg NOT CP '*CPI success*'
-                     AND msg NOT CP '*CPI error*'
-                     AND msg NOT CP '*Locked*'
-                     AND msg NOT CP '*Unlocked*'.
+  DATA(lt_sent) = VALUE #( ).
+
+  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_row>).
+    IF <ls_row>-msg CS 'sent'
+    OR <ls_row>-msg CS 'CPI success'
+    OR <ls_row>-msg CS 'CPI error'
+    OR <ls_row>-msg CS 'Locked'
+    OR <ls_row>-msg CS 'Unlocked'.
+      APPEND <ls_row> TO lt_sent.
+    ENDIF.
+  ENDLOOP.
+
+  gt_output = lt_sent.
 
   IF gt_output IS INITIAL.
     WRITE: / 'No orders were sent to CMX.'.
