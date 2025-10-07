@@ -1,90 +1,4 @@
 *---------------------------------------------------------------------*
-* Prepare output
-*---------------------------------------------------------------------*
-FORM f_prepare_output USING ps_order TYPE viaufkst
-                            pv_vornr TYPE vornr
-                            pv_stat  TYPE jest-stat.
-
-  CLEAR gs_output.
-
-  gs_output-OrderMessageStatus        = 'CREATE'.
-  gs_output-Plant                     = ps_order-iwerk.
-  gs_output-MaintenanceOrder          = ps_order-aufnr.
-  gs_output-MaintenanceOrderOperation = pv_vornr.
-  gs_output-MaintOrdBasicStartDate    = ps_order-gstrp.
-  gs_output-MaintOrdBasicEndDate      = ps_order-gltrp.
-  gs_output-LatestAcceptableComplDate = ps_order-lacd_date.
-  gs_output-SystemId                  = sy-sysid.
-
-  "---------------------------------------------------
-  " Determine final system status text
-  "---------------------------------------------------
-  DATA(lv_teco_active) = abap_false.
-  DATA(lv_cmx_active)  = abap_false.
-
-  " Check if TECO active
-  SELECT SINGLE stat
-    INTO @DATA(lv_teco_stat)
-    FROM jest
-   WHERE objnr = @ps_order-objnr
-     AND stat  = 'I0045'       " Technically Completed
-     AND inact = ''.
-  IF sy-subrc = 0.
-    lv_teco_active = abap_true.
-  ENDIF.
-
-  " Check if CMXC (Confirmed) active
-  SELECT SINGLE stat
-    INTO @DATA(lv_cmx_stat)
-    FROM jest
-   WHERE objnr = @ps_order-objnr
-     AND stat  = 'E0010'       " CMX Confirmed
-     AND inact = ''.
-  IF sy-subrc = 0.
-    lv_cmx_active = abap_true.
-  ENDIF.
-
-  "---------------------------------------------------
-  " Determine final display text
-  "---------------------------------------------------
-  IF lv_teco_active = abap_true.
-    " Get English description for TECO (e.g. 'Technically Completed')
-    SELECT SINGLE txt04
-      INTO gs_output-SystemStatusText
-      FROM tj02t
-     WHERE istat = 'I0045'
-       AND spras = 'E'.
-  ELSE.
-    " Other statuses (REL, LKD, etc.)
-    SELECT SINGLE txt04
-      INTO gs_output-SystemStatusText
-      FROM tj02t
-     WHERE istat = pv_stat
-       AND spras = 'E'.
-  ENDIF.
-
-  "---------------------------------------------------
-  " Technical object (Equipment or Functional Location)
-  "---------------------------------------------------
-  IF ps_order-equnr IS NOT INITIAL.
-    gs_output-TechnicalObject = ps_order-equnr.
-  ELSE.
-    gs_output-TechnicalObject = ps_order-tplnr.
-  ENDIF.
-
-  APPEND gs_output TO gt_output.
-
-ENDFORM.
-
-
-
-
-
-
-
-
-
-*---------------------------------------------------------------------*
 * Get first valid operation
 *---------------------------------------------------------------------*
 FORM f_get_operation USING ps_order TYPE viaufkst
@@ -92,38 +6,45 @@ FORM f_get_operation USING ps_order TYPE viaufkst
 
   DATA: lt_ops   TYPE TABLE OF afvc,
         ls_op    TYPE afvc,
+        lv_aufpl TYPE afko-aufpl,
         lv_stat  TYPE jest-stat.
 
   CLEAR pv_vornr.
 
-  " 1️⃣ Get all operations for this order from AFVC (join via AUFPL)
-  SELECT vornr, aufpl, aplzl, objnr
+  " 1️⃣ Get routing number for this order (AFKO)
+  SELECT SINGLE aufpl
+    INTO @lv_aufpl
+    FROM afko
+   WHERE aufnr = @ps_order-aufnr.
+
+  IF sy-subrc <> 0 OR lv_aufpl IS INITIAL.
+    RETURN. " No routing found for this order
+  ENDIF.
+
+  " 2️⃣ Get operations linked to that routing (AFVC)
+  SELECT vornr, objnr
     FROM afvc
-    WHERE aufpl = ( SELECT aufpl FROM afko WHERE aufnr = @ps_order-aufnr )
+    WHERE aufpl = @lv_aufpl
     ORDER BY aplzl
     INTO TABLE @lt_ops.
 
-  IF sy-subrc <> 0 OR lt_ops IS INITIAL.
+  IF lt_ops IS INITIAL.
     RETURN.
   ENDIF.
 
-  " 2️⃣ Loop and find first operation that is not deleted (no I0013)
+  " 3️⃣ Loop and pick the first active (not deleted) operation
   LOOP AT lt_ops INTO ls_op.
-
-    " Check deletion flag (status I0013)
     SELECT SINGLE stat
       FROM jest
      WHERE objnr = @ls_op-objnr
-       AND stat  = 'I0013'
+       AND stat  = 'I0013'  " Deleted
        AND inact = ''
      INTO @lv_stat.
 
     IF sy-subrc <> 0.
-      " Not deleted → this is a valid operation
       pv_vornr = ls_op-vornr.
-      EXIT.
+      EXIT. " Found valid operation
     ENDIF.
-
   ENDLOOP.
 
 ENDFORM.
