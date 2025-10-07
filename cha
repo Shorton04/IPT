@@ -1,5 +1,51 @@
 *---------------------------------------------------------------------*
-* Update SAP status and send to CPI / simulate if test mode
+* END-OF-SELECTION
+*---------------------------------------------------------------------*
+END-OF-SELECTION.
+
+  IF gt_output IS INITIAL.
+    WRITE: / 'No matching orders found.'.
+    EXIT.
+  ENDIF.
+
+  "-------------------------------------------
+  " Run sending or simulation
+  "-------------------------------------------
+  IF p_test IS INITIAL.
+    PERFORM f_send_cmx.     " Live mode (includes CMXS updates)
+    PERFORM f_send_to_cpi.  " Send JSON payload to CPI
+  ELSE.
+    PERFORM f_send_cmx.     " Test mode (simulated sends only)
+  ENDIF.
+
+  "-------------------------------------------
+  " Show only relevant output in ALV
+  "-------------------------------------------
+  DATA: lt_sent TYPE TABLE OF ty_output.
+
+  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_row>).
+    IF <ls_row>-msg CS 'sent'
+    OR <ls_row>-msg CS 'CPI success'
+    OR <ls_row>-msg CS 'CPI error'
+    OR <ls_row>-msg CS 'Locked'
+    OR <ls_row>-msg CS 'Unlocked'
+    OR <ls_row>-msg CS '[Test Mode]'.
+      APPEND <ls_row> TO lt_sent.
+    ENDIF.
+  ENDLOOP.
+
+  gt_output = lt_sent.
+
+  IF gt_output IS INITIAL.
+    WRITE: / 'No orders were sent to CMX.'.
+  ELSE.
+    PERFORM f_display.
+  ENDIF.
+
+
+
+*---------------------------------------------------------------------*
+* Update SAP status (CMXS) and simulate/send to CPI
 *---------------------------------------------------------------------*
 FORM f_send_cmx.
 
@@ -17,6 +63,7 @@ FORM f_send_cmx.
     " Determine if order already has CMXS
     "---------------------------------------------------
     DATA(lv_already_sent) = abap_false.
+
     SELECT SINGLE stat
       FROM jest
       WHERE objnr = ( SELECT objnr FROM aufk WHERE aufnr = @<ls_output_row>-MaintenanceOrder )
@@ -121,41 +168,110 @@ ENDFORM.
 
 
 
+*---------------------------------------------------------------------*
+* Check status (REL / TECO / LOCKED / CMXS)
+*---------------------------------------------------------------------*
+FORM f_check_status USING ps_order TYPE viaufkst.
 
+  DATA: lv_obj   TYPE cuobj,
+        lv_value TYPE atwrt,
+        lv_stat  TYPE jest-stat,
+        lv_date  TYPE udate,
+        lv_time  TYPE utime,
+        lv_objid TYPE c LENGTH 20,
+        lv_inact TYPE jest-inact,
+        lv_vornr TYPE vornr.
 
-
-END-OF-SELECTION.
-
-  IF gt_output IS INITIAL.
-    WRITE: / 'No matching orders found.'.
-    EXIT.
-  ENDIF.
-
-  IF p_test IS INITIAL.
-    PERFORM f_send_cmx.
-    PERFORM f_send_to_cpi.
+  "---------------------------------------------------
+  " Determine classification object
+  "---------------------------------------------------
+  IF ps_order-equnr IS NOT INITIAL.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
   ELSE.
-    PERFORM f_send_cmx. " Still simulate messages
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
+  ENDIF.
+  IF lv_obj IS INITIAL.
+    RETURN.
   ENDIF.
 
-  " Filter to show only relevant CMX rows (including test mode)
-  DATA: lt_sent TYPE TABLE OF ty_output.
+  "---------------------------------------------------
+  " Check REL / TECO status
+  "---------------------------------------------------
+  SELECT SINGLE stat
+    INTO @lv_stat
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat IN ('I0002','I0045')   " REL or TECO
+     AND inact = ''.
+  IF sy-subrc <> 0.
+    RETURN.
+  ENDIF.
 
-  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_row>).
-    IF <ls_row>-msg CS 'sent'
-    OR <ls_row>-msg CS 'CPI success'
-    OR <ls_row>-msg CS 'CPI error'
-    OR <ls_row>-msg CS 'Locked'
-    OR <ls_row>-msg CS 'Unlocked'
-    OR <ls_row>-msg CS '[Test Mode]'.
-      APPEND <ls_row> TO lt_sent.
+  "---------------------------------------------------
+  " Skip REL orders already CMXS (no change since)
+  "---------------------------------------------------
+  DATA(lv_cmxs_active) = abap_false.
+
+  SELECT SINGLE stat
+    INTO @lv_stat
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'E0014'   " CMXS active
+     AND inact = ''.
+
+  IF sy-subrc = 0.
+    lv_cmxs_active = abap_true.
+  ENDIF.
+
+  " Get last change date/time (CDHDR)
+  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+  SELECT MAX( udate ) AS max_date,
+         MAX( utime ) AS max_time
+    INTO ( @lv_date, @lv_time )
+    FROM cdhdr
+   WHERE objectclas = 'ORDER'
+     AND objectid    = @lv_objid.
+
+  IF lv_cmxs_active = abap_true
+     AND ( lv_date < so_date-low
+        OR ( lv_date = so_date-low AND lv_time <= so_time-low ) ).
+    RETURN. " Skip old REL + CMXS
+  ENDIF.
+
+  "---------------------------------------------------
+  " Check INTERFACE = CMX
+  "---------------------------------------------------
+  SELECT SINGLE atwrt
+    INTO @lv_value
+    FROM ausp
+   WHERE objek = @lv_obj
+     AND atinn = @gv_atinn.
+
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Lock/Unlock handling
+  "---------------------------------------------------
+  SELECT SINGLE inact
+    INTO @lv_inact
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'I0043'. " Locked
+
+  IF sy-subrc = 0.
+    IF lv_inact IS INITIAL.
+      lv_stat = 'I0043'. " Active lock
+    ELSE.
+      lv_stat = 'I0002'. " Unlock back to REL
     ENDIF.
-  ENDLOOP.
-
-  gt_output = lt_sent.
-
-  IF gt_output IS INITIAL.
-    WRITE: / 'No orders were sent to CMX.'.
-  ELSE.
-    PERFORM f_display.
   ENDIF.
+
+  "---------------------------------------------------
+  " Determine operation and prepare output
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+
+ENDFORM.
