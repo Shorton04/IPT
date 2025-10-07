@@ -1,6 +1,6 @@
-*&---------------------------------------------------------------------*
-*& Include          ZIN_CMX_WORKORDER_TOP
-*&---------------------------------------------------------------------*
+*---------------------------------------------------------------------*
+*  Include: ZIN_CMX_WORKORDER_TOP
+*---------------------------------------------------------------------*
 
 CONSTANTS: c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
            c_stat_teco TYPE jest-stat VALUE 'I0045',   "Technically Completed
@@ -9,20 +9,18 @@ CONSTANTS: c_stat_rel  TYPE jest-stat VALUE 'I0002',   "Released
            c_stat_cmxs TYPE jest-stat VALUE 'E0014'.   "Sent to CMX
 
 TYPES: BEGIN OF ty_output,
-         OrderMessageStatus        TYPE char10,              "OrderMessageStatus
-         Plant                     TYPE werks_d,             "Plant
-         MaintenanceOrder          TYPE aufnr,               "MaintenanceOrder
-         MaintenanceOrderOperation TYPE vornr,               "MaintenanceOrderOperation
-         SystemStatusText          TYPE char40,              "SystemStatusText
-         TechnicalObject           TYPE char30,              "TechnicalObject
-         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,      "Basic Start Date
-         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,      "Basic End Date
-         LatestAcceptableComplDate TYPE viaufkst-lacd_date,  "Latest Acceptable Date
-         SystemId                  TYPE sy-sysid,            "SystemId (for CPI)
-         Msg                       TYPE char72,              "Error Message
+         OrderMessageStatus        TYPE char10,
+         Plant                     TYPE werks_d,
+         MaintenanceOrder          TYPE aufnr,
+         MaintenanceOrderOperation TYPE vornr,
+         SystemStatusText          TYPE char40,
+         TechnicalObject           TYPE char30,
+         MaintOrdBasicStartDate    TYPE viaufkst-gstrp,
+         MaintOrdBasicEndDate      TYPE viaufkst-gltrp,
+         LatestAcceptableComplDate TYPE viaufkst-lacd_date,
+         SystemId                  TYPE sy-sysid,
+         Msg                       TYPE char72,
        END OF ty_output.
-
-
 
 DATA: gt_output TYPE TABLE OF ty_output,
       gs_output TYPE ty_output.
@@ -31,3 +29,15 @@ DATA: gt_orders TYPE TABLE OF viaufkst,
       gs_order  TYPE viaufkst.
 
 DATA: gv_atinn TYPE atinn.   "INTERFACE characteristic ID
+
+*-------------------------------------------------------------*
+* Prefetched reference tables for performance
+*-------------------------------------------------------------*
+DATA: gt_jest  TYPE TABLE OF jest,
+      gs_jest  TYPE jest,
+      gt_inob  TYPE TABLE OF inob,
+      gs_inob  TYPE inob,
+      gt_ausp  TYPE TABLE OF ausp,
+      gs_ausp  TYPE ausp,
+      gt_cdhdr TYPE TABLE OF cdhdr,
+      gs_cdhdr TYPE cdhdr.
