@@ -1,64 +1,3 @@
-*---------------------------------------------------------------------*
-* Prefetch related master data (for performance)
-*---------------------------------------------------------------------*
-FORM f_prefetch_data.
-
-  IF gt_orders IS INITIAL.
-    RETURN.
-  ENDIF.
-
-  "----------------------------------------------------------
-  " Build helper lists for FOR ALL ENTRIES (properly typed)
-  "----------------------------------------------------------
-  DATA: lt_objek     TYPE STANDARD TABLE OF inob-objek WITH DEFAULT KEY,
-        lt_objnr     TYPE STANDARD TABLE OF jest-objnr WITH DEFAULT KEY,
-        lt_objectid  TYPE STANDARD TABLE OF cdhdr-objectid WITH DEFAULT KEY,
-        lt_cuobj     TYPE STANDARD TABLE OF inob-cuobj WITH DEFAULT KEY,
-        lv_objid     TYPE cdhdr-objectid.
-
-  LOOP AT gt_orders INTO DATA(ls_order).
-    " Equipment / Functional location
-    IF ls_order-equnr IS NOT INITIAL.
-      APPEND ls_order-equnr TO lt_objek.
-    ENDIF.
-    IF ls_order-tplnr IS NOT INITIAL.
-      APPEND ls_order-tplnr TO lt_objek.
-    ENDIF.
-
-    " JEST key
-    APPEND ls_order-objnr TO lt_objnr.
-
-    " Build CDHDR-OBJECTID = client + '30' + order number
-    CONCATENATE sy-mandt '30' ls_order-aufnr INTO lv_objid.
-    APPEND lv_objid TO lt_objectid.
-  ENDLOOP.
-
-  DELETE ADJACENT DUPLICATES FROM lt_objek.
-  DELETE ADJACENT DUPLICATES FROM lt_objnr.
-  DELETE ADJACENT DUPLICATES FROM lt_objectid.
-
-  "----------------------------------------------------------
-  " 1) JEST statuses
-  "----------------------------------------------------------
-  IF lt_objnr IS NOT INITIAL.
-    SELECT objnr stat inact
-      FROM jest
-      INTO TABLE @gt_jest
-      FOR ALL ENTRIES IN @lt_objnr
-      WHERE objnr = @lt_objnr-table_line.
-  ENDIF.
-
-  "----------------------------------------------------------
-  " 2) INOB classification links
-  "----------------------------------------------------------
-  IF lt_objek IS NOT INITIAL.
-    SELECT objek cuobj
-      FROM inob
-      INTO TABLE @gt_inob
-      FOR ALL ENTRIES IN @lt_objek
-      WHERE objek = @lt_objek-table_line.
-  ENDIF.
-
   "----------------------------------------------------------
   " 3) AUSP characteristics (for CUOBJ)
   "----------------------------------------------------------
@@ -72,7 +11,7 @@ FORM f_prefetch_data.
       FROM ausp
       INTO TABLE @gt_ausp
       FOR ALL ENTRIES IN @lt_cuobj
-      WHERE objek = @lt_cuobj-table_line.
+      WHERE objek = @CONV( ausp-objek( lt_cuobj-table_line ) ).
   ENDIF.
 
   "----------------------------------------------------------
