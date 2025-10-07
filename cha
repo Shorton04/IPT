@@ -1,194 +1,32 @@
-START-OF-SELECTION.
+*-------------------------------------------------------------*
+*  END-OF-SELECTION
+*-------------------------------------------------------------*
+END-OF-SELECTION.
 
-  PERFORM f_get_orders.          " Step 1: Fetch candidate orders
-
-  IF gt_orders IS INITIAL.
-    WRITE: / 'No eligible orders found.'.
+  IF gt_output IS INITIAL.
+    WRITE: / 'No matching orders found.'.
     EXIT.
   ENDIF.
 
-  PERFORM f_prefetch_data.       " Step 2: Bulk fetch related data
+  "-------------------------------------------------------
+  " Send data and update statuses (if not test mode)
+  "-------------------------------------------------------
+  IF p_test IS INITIAL.
+    PERFORM f_send_cmx.          "Update user status CMXS if needed
+    PERFORM f_send_to_cpi.       "Send JSON payload to CPI
+  ENDIF.
 
-  LOOP AT gt_orders INTO gs_order.
-    PERFORM f_check_status USING gs_order.
-  ENDLOOP.
+  "-------------------------------------------------------
+  " Show only those actually sent to CMX (based on message)
+  "-------------------------------------------------------
+  DELETE gt_output WHERE msg NOT CP '*sent*'
+                     AND msg NOT CP '*CPI success*'
+                     AND msg NOT CP '*CPI error*'
+                     AND msg NOT CP '*Locked*'
+                     AND msg NOT CP '*Unlocked*'.
 
-END-OF-SELECTION.
-
-  IF gt_output IS NOT INITIAL.
-    IF p_test IS INITIAL.
-      PERFORM f_send_cmx.
-      PERFORM f_send_to_cpi.
-    ENDIF.
+  IF gt_output IS INITIAL.
+    WRITE: / 'No orders were sent to CMX.'.
+  ELSE.
     PERFORM f_display.
-  ELSE.
-    WRITE: / 'No matching orders found.'.
   ENDIF.
-
-
-
-
-FORM f_get_orders.
-
-  SELECT SINGLE atinn INTO @gv_atinn
-    FROM cabn
-   WHERE atnam = 'INTERFACE'.
-  IF sy-subrc <> 0.
-    MESSAGE 'Characteristic INTERFACE not found' TYPE 'E'.
-  ENDIF.
-
-  IF so_date-low IS INITIAL OR so_time-low IS INITIAL.
-    MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
-  ENDIF.
-
-  " Per spec: IDAT1 not blank OR IDAT2 >= check date
-  SELECT *
-    FROM viaufkst
-    WHERE auart IN @so_auart
-      AND iwerk IN @so_werks
-      AND aufnr IN @so_aufnr
-      AND ( idat1 IS NOT INITIAL OR idat2 >= @so_date-low )
-    INTO TABLE @gt_orders.
-
-  IF gt_orders IS INITIAL.
-    MESSAGE 'No eligible maintenance orders found' TYPE 'I'.
-  ELSE.
-    WRITE: / |{ lines( gt_orders ) } eligible orders found.|.
-  ENDIF.
-
-ENDFORM.
-
-
-
-
-FORM f_prefetch_data.
-
-  DATA lt_objnr TYPE TABLE OF jest-objnr.
-
-  " Collect all object numbers for the fetched orders
-  LOOP AT gt_orders INTO gs_order.
-    APPEND gs_order-objnr TO lt_objnr.
-  ENDLOOP.
-
-  " Fetch JEST statuses (REL, TECO, LOCK, CMXC, CMXS)
-  SELECT objnr stat inact
-    FROM jest
-    INTO TABLE @gt_jest
-    FOR ALL ENTRIES IN @lt_objnr
-    WHERE objnr = @lt_objnr-table_line
-      AND stat IN ('I0002','I0045','I0043','E0010','E0014').
-
-  " Fetch INOB classification object (for EQUIP or FUNCLOC)
-  SELECT objek cuobj
-    FROM inob
-    INTO TABLE @gt_inob
-    FOR ALL ENTRIES IN @gt_orders
-    WHERE objek = @gt_orders-equnr
-       OR objek = @gt_orders-tplnr.
-
-  " Fetch AUSP characteristic values (INTERFACE)
-  SELECT objek atinn atwrt
-    FROM ausp
-    INTO TABLE @gt_ausp
-    FOR ALL ENTRIES IN @gt_inob
-    WHERE objek = @gt_inob-cuobj
-      AND atinn = @gv_atinn.
-
-  " Fetch latest change headers for orders
-  SELECT objectid udate utime
-    FROM cdhdr
-    INTO TABLE @gt_cdhdr
-    FOR ALL ENTRIES IN @gt_orders
-    WHERE objectclas = 'ORDER'
-      AND objectid    = CONCAT( sy-mandt, '30', gt_orders-aufnr ).
-
-ENDFORM.
-
-
-
-
-FORM f_check_status USING ps_order TYPE viaufkst.
-
-  DATA: lv_stat  TYPE jest-stat,
-        lv_inact TYPE jest-inact,
-        lv_vornr TYPE vornr,
-        lv_date  TYPE udate,
-        lv_time  TYPE utime,
-        lv_objnr TYPE jest-objnr,
-        lv_obj   TYPE cuobj,
-        lv_value TYPE atwrt.
-
-  lv_objnr = ps_order-objnr.
-
-  " 1. Find classification object (INOB)
-  READ TABLE gt_inob INTO DATA(ls_inob)
-    WITH KEY objek = COND #( WHEN ps_order-equnr IS NOT INITIAL
-                              THEN ps_order-equnr ELSE ps_order-tplnr ).
-  IF sy-subrc = 0.
-    lv_obj = ls_inob-cuobj.
-  ELSE.
-    RETURN.
-  ENDIF.
-
-  " 2. Check for Released or TECO (I0002 / I0045)
-  READ TABLE gt_jest INTO DATA(ls_rel)
-    WITH KEY objnr = lv_objnr stat = 'I0002' inact = ''.
-  IF sy-subrc <> 0.
-    READ TABLE gt_jest INTO DATA(ls_teco)
-      WITH KEY objnr = lv_objnr stat = 'I0045' inact = ''.
-    IF sy-subrc <> 0.
-      RETURN. " neither released nor teco
-    ENDIF.
-  ENDIF.
-
-  " 3. Check if CMXC (E0010) is active
-  READ TABLE gt_jest INTO DATA(ls_cmxc)
-    WITH KEY objnr = lv_objnr stat = 'E0010' inact = ''.
-  IF sy-subrc = 0.
-    RETURN. " CMXC still active, skip
-  ENDIF.
-
-  " 4. INTERFACE must be CMX
-  READ TABLE gt_ausp INTO DATA(ls_ausp)
-    WITH KEY objek = lv_obj atinn = gv_atinn.
-  IF sy-subrc <> 0 OR ls_ausp-atwrt <> 'CMX'.
-    RETURN.
-  ENDIF.
-
-  " 5. Change detection (from prefetched CDHDR)
-  READ TABLE gt_cdhdr INTO DATA(ls_hdr)
-    WITH KEY objectid = |{ sy-mandt }30{ ps_order-aufnr }|.
-  IF sy-subrc = 0.
-    lv_date = ls_hdr-udate.
-    lv_time = ls_hdr-utime.
-  ENDIF.
-
-  IF ( lv_date < so_date-low OR ( lv_date = so_date-low AND lv_time < so_time-low ) ).
-    " Check CMXS (E0014)
-    READ TABLE gt_jest INTO DATA(ls_cmxs)
-      WITH KEY objnr = lv_objnr stat = 'E0014' inact = ''.
-    IF sy-subrc = 0.
-      RETURN. " already sent
-    ENDIF.
-  ENDIF.
-
-  " 6. Lock handling (I0043)
-  READ TABLE gt_jest INTO DATA(ls_lock)
-    WITH KEY objnr = lv_objnr stat = 'I0043'.
-  IF sy-subrc = 0.
-    IF ls_lock-inact IS INITIAL.
-      lv_stat = 'I0043'.
-    ELSE.
-      lv_stat = 'I0002'.
-    ENDIF.
-  ELSE.
-    lv_stat = 'I0002'. " default REL
-  ENDIF.
-
-  " 7. Get operation number
-  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-
-  " 8. Prepare output
-  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-
-ENDFORM.
