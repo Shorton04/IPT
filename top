@@ -1,88 +1,135 @@
-FORM f_send_cmx.
+*---------------------------------------------------------------------*
+* Check order statuses and eligibility (updated with REL/TECO logic)
+*---------------------------------------------------------------------*
+FORM f_check_status USING ps_order TYPE viaufkst.
 
-  DATA lv_mode TYPE char10.
+  DATA: lv_obj   TYPE cuobj,
+        lv_value TYPE atwrt,
+        lv_stat  TYPE jest-stat,
+        lv_date  TYPE udate,
+        lv_time  TYPE utime,
+        lv_objid TYPE c LENGTH 20,
+        lv_inact TYPE jest-inact,
+        lv_vornr TYPE vornr.
 
-  IF p_test = abap_true.
-    lv_mode = 'TEST'.
+  "---------------------------------------------------
+  " Classification object (equipment or functional location)
+  "---------------------------------------------------
+  IF ps_order-equnr IS NOT INITIAL.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
   ELSE.
-    lv_mode = 'LIVE'.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-tplnr.
+  ENDIF.
+  IF lv_obj IS INITIAL.
+    RETURN.
   ENDIF.
 
-  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
+  "---------------------------------------------------
+  " Step 4.1: Status check (REL or TECO required)
+  "---------------------------------------------------
+  SELECT SINGLE stat
+    INTO lv_stat
+    FROM jest
+   WHERE objnr = ps_order-objnr
+     AND stat IN ('I0002', 'I0045') " REL, TECO
+     AND inact = ''.
+  IF sy-subrc <> 0.
+    RETURN. " Not valid (no REL/TECO)
+  ENDIF.
 
-    " Skip Locked or TECO
-    IF <ls_output_row>-SystemStatusText = 'LOCKED'
-    OR  <ls_output_row>-SystemStatusText = 'TECO'.
-      <ls_output_row>-msg = |Skipped: { <ls_output_row>-SystemStatusText } order|.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
-                                 'CMXS'
-                                 <ls_output_row>-msg.
-      CONTINUE.
-    ENDIF.
+  "---------------------------------------------------
+  " Step 4.2/4.3: CMXC (E0010) handling per boss rule
+  "---------------------------------------------------
+  SELECT SINGLE inact
+    INTO lv_inact
+    FROM jest
+   WHERE objnr = ps_order-objnr
+     AND stat  = 'E0010'. " CMXC confirmed
 
-    "---------------------------------------------------
-    " TEST mode → simulate without sending
-    "---------------------------------------------------
-    IF lv_mode = 'TEST'.
-      <ls_output_row>-msg = |[Test Mode] Would send CMXS to CPI for order { <ls_output_row>-MaintenanceOrder }|.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
-                                 'CMXS'
-                                 <ls_output_row>-msg.
-      CONTINUE.
-    ENDIF.
+  IF sy-subrc = 0 AND lv_inact IS INITIAL.
+    " CMXC active → check if TECO exists
+    DATA(lv_teco_found) = abap_false.
 
-    "---------------------------------------------------
-    " LIVE mode → perform actual update
-    "---------------------------------------------------
-    DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
-          lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
-          lt_methods TYPE TABLE OF bapi_alm_order_method,
-          lt_return  TYPE TABLE OF bapiret2,
-          ls_return  TYPE bapiret2.
+    SELECT SINGLE stat
+      FROM jest
+      INTO lv_stat
+      WHERE objnr = ps_order-objnr
+        AND stat  = 'I0045' " TECO
+        AND inact = ''.
 
-    CLEAR: lt_header, lt_status, lt_methods, lt_return.
-
-    " Header
-    APPEND VALUE #( orderid = <ls_output_row>-MaintenanceOrder ) TO lt_header.
-
-    " User Status
-    APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu ) TO lt_status.
-
-    " Methods
-    APPEND VALUE #( refnumber = '00001' objecttype = 'HEADER' method = 'CHANGE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
-    APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS' method = 'CHANGE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
-    APPEND VALUE #( refnumber = '00003' objecttype = 'ORDER' method = 'SAVE' objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
-
-    " Call BAPI
-    CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-      TABLES
-        it_header     = lt_header
-        it_methods    = lt_methods
-        it_userstatus = lt_status
-        return        = lt_return.
-
-    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
     IF sy-subrc = 0.
-      <ls_output_row>-msg = ls_return-message(72).
-      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-    ELSE.
-      <ls_output_row>-msg = 'CMXS status updated successfully'.
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING wait = 'X'.
+      lv_teco_found = abap_true.
     ENDIF.
 
-    PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                               <ls_output_row>-MaintenanceOrderOperation
-                               <ls_output_row>-Plant
-                               'CMXS'
-                               <ls_output_row>-msg.
+    " Skip only if CMXC active and no TECO
+    IF lv_teco_found = abap_false.
+      RETURN.
+    ENDIF.
+  ENDIF.
 
-  ENDLOOP.
+  "---------------------------------------------------
+  " Step 4.4: INTERFACE must be CMX
+  "---------------------------------------------------
+  SELECT SINGLE atwrt
+    INTO lv_value
+    FROM ausp
+   WHERE objek = lv_obj
+     AND atinn = gv_atinn.
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+    RETURN.
+  ENDIF.
 
-  COMMIT WORK.
+  "---------------------------------------------------
+  " Step 5: Change detection (CDHDR + CMXS logic)
+  "---------------------------------------------------
+  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+
+  SELECT MAX( udate ) MAX( utime )
+    INTO (lv_date, lv_time)
+    FROM cdhdr
+   WHERE objectclas = 'ORDER'
+     AND objectid    = lv_objid.
+
+  IF ( lv_date < so_date-low OR
+       ( lv_date = so_date-low AND lv_time < so_time-low ) ).
+
+    " Check if CMXS (E0014) already set
+    SELECT SINGLE stat
+      INTO lv_stat
+      FROM jest
+     WHERE objnr = ps_order-objnr
+       AND stat  = 'E0014' " Sent to CMX
+       AND inact = ''.
+
+    IF sy-subrc = 0.
+      RETURN. " Already sent -> skip
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 4.5: Lock/Unlock handling (I0043)
+  "---------------------------------------------------
+  SELECT SINGLE inact
+    INTO lv_inact
+    FROM jest
+   WHERE objnr = ps_order-objnr
+     AND stat  = 'I0043'. " Locked
+  IF sy-subrc = 0.
+    IF lv_inact IS INITIAL.
+      lv_stat = 'I0043'. " Locked
+    ELSE.
+      lv_stat = 'I0002'. " Unlocked -> treat as Released
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 7: Get first valid operation
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+
+  "---------------------------------------------------
+  " Prepare output
+  "---------------------------------------------------
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
