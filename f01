@@ -16,6 +16,7 @@ FORM f_get_orders.
     MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
   ENDIF.
 
+  " Eligible orders (IDAT1 not blank OR IDAT2 >= check date)
   SELECT *
     FROM viaufkst
     WHERE auart IN @so_auart
@@ -27,35 +28,40 @@ FORM f_get_orders.
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Prefetch related master data (improves performance)
+* Prefetch related master data (for performance)
 *---------------------------------------------------------------------*
 FORM f_prefetch_data.
   IF gt_orders IS INITIAL.
     RETURN.
   ENDIF.
 
+  " --- Fetch system statuses (JEST)
   SELECT objnr, stat, inact
     FROM jest
     FOR ALL ENTRIES IN @gt_orders
     WHERE objnr = @gt_orders-objnr
     INTO TABLE @gt_jest.
 
+  " --- Fetch classification linkages (INOB)
   SELECT objek, cuobj
     FROM inob
     FOR ALL ENTRIES IN @gt_orders
-    WHERE objek = @gt_orders-equnr OR objek = @gt_orders-tplnr
+    WHERE objek = @CONV(inob-objek( gt_orders-equnr ))
+       OR objek = @CONV(inob-objek( gt_orders-tplnr ))
     INTO TABLE @gt_inob.
 
+  " --- Fetch characteristics (AUSP)
   SELECT objek, atinn, atwrt
     FROM ausp
     FOR ALL ENTRIES IN @gt_inob
     WHERE objek = @gt_inob-cuobj
     INTO TABLE @gt_ausp.
 
+  " --- Fetch change header logs (CDHDR)
   SELECT objectid, udate, utime
     FROM cdhdr
     FOR ALL ENTRIES IN @gt_orders
-    WHERE objectid = @gt_orders-aufnr
+    WHERE objectid = @CONV(cdhdr-objectid( gt_orders-aufnr ))
       AND objectclas = 'ORDER'
     INTO TABLE @gt_cdhdr.
 
@@ -73,7 +79,7 @@ FORM f_process_orders.
 ENDFORM.
 
 *---------------------------------------------------------------------*
-* Check status (simplified using prefetched tables)
+* Check order statuses and eligibility
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
@@ -81,9 +87,12 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_value TYPE atwrt,
         lv_stat  TYPE jest-stat,
         lv_date  TYPE udate,
-        lv_time  TYPE utime.
+        lv_time  TYPE utime,
+        lv_vornr TYPE vornr.
 
-  "Find classification object
+  "---------------------------------------------------
+  " Step 1: Get classification object (EQUIP or FL)
+  "---------------------------------------------------
   READ TABLE gt_inob INTO gs_inob
        WITH KEY objek = ps_order-equnr.
   IF sy-subrc <> 0.
@@ -95,31 +104,45 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
   lv_obj = gs_inob-cuobj.
 
-  "Check REL or TECO
+  "---------------------------------------------------
+  " Step 2: Check REL or TECO
+  "---------------------------------------------------
   READ TABLE gt_jest INTO gs_jest
        WITH KEY objnr = ps_order-objnr
-                stat IN ( 'I0002', 'I0045' )
+                stat = 'I0002'
                 inact = ''.
   IF sy-subrc <> 0.
-    RETURN.
+    READ TABLE gt_jest INTO gs_jest
+         WITH KEY objnr = ps_order-objnr
+                  stat = 'I0045'
+                  inact = ''.
+  ENDIF.
+  IF sy-subrc <> 0.
+    RETURN. "Not valid
   ENDIF.
   lv_stat = gs_jest-stat.
 
-  "Skip CMXC active
+  "---------------------------------------------------
+  " Step 3: Skip if CMXC (E0010) active
+  "---------------------------------------------------
   READ TABLE gt_jest INTO gs_jest
        WITH KEY objnr = ps_order-objnr stat = 'E0010' inact = ''.
   IF sy-subrc = 0.
-    RETURN.
+    RETURN. "CMXC still active
   ENDIF.
 
-  "Check INTERFACE characteristic
+  "---------------------------------------------------
+  " Step 4: INTERFACE must be CMX
+  "---------------------------------------------------
   READ TABLE gt_ausp INTO gs_ausp
        WITH KEY objek = lv_obj atinn = gv_atinn.
   IF sy-subrc <> 0 OR gs_ausp-atwrt <> 'CMX'.
     RETURN.
   ENDIF.
 
-  "Get last change date
+  "---------------------------------------------------
+  " Step 5: Change detection (CDHDR + CMXS logic)
+  "---------------------------------------------------
   READ TABLE gt_cdhdr INTO gs_cdhdr
        WITH KEY objectid = ps_order-aufnr
        BINARY SEARCH.
@@ -128,26 +151,31 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     lv_time = gs_cdhdr-utime.
   ENDIF.
 
-  "Skip if older than check date and CMXS already exists
   IF ( lv_date < so_date-low OR ( lv_date = so_date-low AND lv_time < so_time-low ) ).
     READ TABLE gt_jest INTO gs_jest
          WITH KEY objnr = ps_order-objnr stat = 'E0014' inact = ''.
     IF sy-subrc = 0.
-      RETURN.
+      RETURN. "Already sent
     ENDIF.
   ENDIF.
 
-  "Handle lock status
+  "---------------------------------------------------
+  " Step 6: Lock handling (I0043)
+  "---------------------------------------------------
   READ TABLE gt_jest INTO gs_jest
        WITH KEY objnr = ps_order-objnr stat = 'I0043'.
   IF sy-subrc = 0 AND gs_jest-inact IS INITIAL.
     lv_stat = 'I0043'.
   ENDIF.
 
-  "Find first operation
-  PERFORM f_get_operation USING ps_order CHANGING DATA(lv_vornr).
+  "---------------------------------------------------
+  " Step 7: Get first valid operation
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
-  "Prepare output
+  "---------------------------------------------------
+  " Step 8: Prepare output record
+  "---------------------------------------------------
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
