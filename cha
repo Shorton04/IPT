@@ -1,265 +1,194 @@
-*&---------------------------------------------------------------------*
-*& Report  ZK_REVENUE_RECOGNITION_CONSMAT
-*&---------------------------------------------------------------------*
-REPORT zk_revenue_recognition_consmat.
+START-OF-SELECTION.
 
-TABLES:mara,afpo,rsapetdtl,prps,zkcgt_wbs_recog.
+  PERFORM f_get_orders.          " Step 1: Fetch candidate orders
 
-DATA:go_controller TYPE REF TO zcl_rfw_controller,
-     go_model_view TYPE REF TO zcl_k_revenue_recog_consmat,
-     gs_parameter  TYPE zcl_k_revenue_recog_consmat=>ts_parameter,
-     ls_bdcdata    TYPE bdcdata,
-*Selection Screen Values
-     lr_psphi      TYPE RANGE OF prps-psphi,
-     lr_pspnr      TYPE RANGE OF prps-pspnr,
-     lr_werks      TYPE RANGE OF afpo-dwerk,
-     lr_charg      TYPE RANGE OF afpo-charg,
-     lr_matnr      TYPE RANGE OF mara-matnr,
-     lr_mtart      TYPE RANGE OF mara-mtart,
-     lr_exdate     TYPE RANGE OF rsapetdtl-extraction_date,
-     lr_amtsr      TYPE RANGE OF zkcgt_wbs_recog-amount_source,
-     lr_ernam      TYPE RANGE OF zkcgt_wbs_recog-ernam,
-     lr_erdat      TYPE RANGE OF zkcgt_wbs_recog-erdat,
-     lr_status     TYPE RANGE OF zkcgt_wbs_recog-status,
-     lv_batrel     TYPE flag.
-
-*---------------------------------------------------------------------*
-*                 Selection-Screen Declaration                        *
-*---------------------------------------------------------------------*
-SELECTION-SCREEN:BEGIN OF SCREEN 0100 AS SUBSCREEN,
-                 BEGIN OF BLOCK b1 WITH FRAME TITLE text-002.
-PARAMETERS:p_rb1 RADIOBUTTON GROUP rg1 DEFAULT 'X' USER-COMMAND rec,
-           p_rb2 RADIOBUTTON GROUP rg1,
-           p_rb3 RADIOBUTTON GROUP rg1.
-SELECTION-SCREEN:END OF BLOCK b1,
-                 BEGIN OF BLOCK b2 WITH FRAME TITLE text-001.
-SELECT-OPTIONS:r_psphi  FOR prps-psphi MODIF ID m2,
-               r_npspnr FOR prps-pspnr MODIF ID m3,
-               r_pspnr  FOR prps-pspnr MODIF ID m4,
-               r_werks  FOR afpo-dwerk,
-               r_charg  FOR afpo-charg MODIF ID m5,
-               r_matnr  FOR mara-matnr MODIF ID m5,
-               r_mtart  FOR mara-mtart DEFAULT 'ROH' MODIF ID m1,
-               r_exdate FOR rsapetdtl-extraction_date
-                        NO INTERVALS NO-EXTENSION MODIF ID m1,
-               r_amtsr  FOR zkcgt_wbs_recog-amount_source MODIF ID m3,
-               r_ernam  FOR zkcgt_wbs_recog-ernam  MODIF ID m3,
-               r_erdat  FOR zkcgt_wbs_recog-erdat  MODIF ID m3,
-               r_status FOR zkcgt_wbs_recog-status MODIF ID m3
-                        DEFAULT space.
-PARAMETERS p_batrel TYPE flag DEFAULT 'X' MODIF ID m1.
-SELECTION-SCREEN:END OF BLOCK b2,
-                 END OF SCREEN 0100.
-*---------------------------------------------------------------------*
-*                         INITIALIZATION                              *
-*---------------------------------------------------------------------*
-INITIALIZATION.
-*Set Defaults
-  PERFORM init_data.
-
-  CREATE OBJECT go_model_view.
-  CALL FUNCTION 'ZRFW_CONTROLLER_M01_V01_L02'
-    EXPORTING
-      iv_parameter_struct_name = 'ZCL_K_REVENUE_RECOG_CONSMAT=>TS_PARAMETER'
-      iv_result_struct_name    = 'ZCL_K_REVENUE_RECOG_CONSMAT=>TS_RESULT'
-      io_view_report           = go_model_view
-      io_view_alv              = go_model_view
-      io_model_selection       = go_model_view
-      iv_report_id             = sy-repid
-      iv_parameter_subscr_id   = '0100'
-    IMPORTING
-      eo_controller            = go_controller.
-  ASSERT go_controller IS BOUND.
-*---------------------------------------------------------------------*
-*                     AT SELECTION-SCREEN                             *
-*---------------------------------------------------------------------*
-AT SELECTION-SCREEN OUTPUT.
-  PERFORM modify_screen.
-
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter( CHANGING cs_parameter = gs_parameter ).
-    go_controller->on_selection_screen_output( CHANGING cs_parameter = gs_parameter ).
-    go_controller->copy_parameter_to_option( EXPORTING is_parameter = gs_parameter ).
+  IF gt_orders IS INITIAL.
+    WRITE: / 'No eligible orders found.'.
+    EXIT.
   ENDIF.
 
-AT SELECTION-SCREEN.
-  PERFORM validate_data.
+  PERFORM f_prefetch_data.       " Step 2: Bulk fetch related data
 
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter( CHANGING cs_parameter = gs_parameter ).
-    go_controller->on_selection_screen( CHANGING cs_parameter = gs_parameter ).
-    go_controller->copy_parameter_to_option( EXPORTING is_parameter = gs_parameter ).
-  ENDIF.
-*&---------------------------------------------------------------------*
-*&      Form  INIT_DATA
-*&---------------------------------------------------------------------*
-FORM init_data.
-
-  DATA:lt_mtart TYPE STANDARD TABLE OF mara-mtart,
-       lv_datum TYPE datum.
-*Default Material Types as per Custom Lookup
-  CLEAR:r_mtart[],r_mtart.
-  SELECT SINGLE * FROM zvv_param INTO @DATA(ls_param)
-                  WHERE lookup_name = 'ZKROHRECOG_MATTYPE_SELECTION' AND
-                        free_key    = 'MTART'                        AND
-                        indicator1  = 'X'.
-  IF sy-subrc = 0.
-    IF NOT ls_param-value1 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-value1 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO DATA(ls_mtart)
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-    IF NOT ls_param-value2 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-value2 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO ls_mtart
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-    IF NOT ls_param-value3 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-value3 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO ls_mtart
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-  ENDIF.
-
-*Set Month end Date as default based on Current Date
-  CLEAR:r_exdate[],r_exdate.
-  lv_datum = sy-datum.
-  CALL FUNCTION 'RP_LAST_DAY_OF_MONTHS'
-    EXPORTING
-      day_in            = lv_datum
-    IMPORTING
-      last_day_of_month = lv_datum
-    EXCEPTIONS
-      day_in_no_date    = 1
-      OTHERS            = 2.
-  IF sy-subrc = 0.
-    r_exdate-sign   = 'I'.
-    r_exdate-option = 'LE'.
-    r_exdate-low    = lv_datum.
-    APPEND r_exdate.CLEAR r_exdate.
-  ENDIF.
-
-*Capture Default Values
-  lr_psphi  = r_psphi[].
-  lr_pspnr  = r_pspnr[].
-  lr_werks  = r_werks[].
-  lr_charg  = r_charg[].
-  lr_matnr  = r_matnr[].
-  lr_mtart  = r_mtart[].
-  lr_exdate = r_exdate[].
-  lr_amtsr  = r_amtsr[].
-  lr_ernam  = r_ernam[].
-  lr_erdat  = r_erdat[].
-  lr_status = r_status[].
-  lv_batrel = p_batrel.
-
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  VALIDATE_DATA
-*&---------------------------------------------------------------------*
-FORM validate_data.
-
-*Check for Mandatory Fields
-  CASE sy-ucomm.
-    WHEN 'EXECUTE'.
-      CASE abap_true.
-        WHEN p_rb1.
-          IF r_werks[] IS INITIAL.
-            MESSAGE 'Please Maintain Plant' TYPE 'E'.
-          ENDIF.
-          IF r_charg[] IS INITIAL.
-            MESSAGE 'Please Maintain Batch' TYPE 'E'.
-          ENDIF.
-        WHEN p_rb2.
-          IF r_psphi[] IS INITIAL AND
-             r_pspnr[] IS INITIAL.
-            MESSAGE 'Please Maintain either Project or WBS' TYPE 'E'.
-          ENDIF.
-      ENDCASE.
-    WHEN 'REC'.
-      r_psphi[]  = lr_psphi[].
-      r_pspnr[]  = lr_pspnr[].
-      r_werks[]  = lr_werks[].
-      r_charg[]  = lr_charg[].
-      r_matnr[]  = lr_matnr[].
-      r_mtart[]  = lr_mtart[].
-      r_exdate[] = lr_exdate[].
-      r_amtsr[]  = lr_amtsr[].
-      r_ernam[]  = lr_ernam[].
-      r_erdat[]  = lr_erdat[].
-      r_status[] = lr_status[].
-      p_batrel   = lv_batrel.
-  ENDCASE.
-
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  MODIFY_SCREEN
-*&---------------------------------------------------------------------*
-FORM modify_screen.
-
-  LOOP AT SCREEN.
-    CASE screen-group1.
-      WHEN 'M1'.
-        IF p_rb1 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M2'.
-        IF p_rb2 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M3'.
-        IF p_rb3 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M4'.
-        IF NOT p_rb1 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M5'.
-        IF NOT p_rb2 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-    ENDCASE.
-    MODIFY SCREEN.
+  LOOP AT gt_orders INTO gs_order.
+    PERFORM f_check_status USING gs_order.
   ENDLOOP.
 
+END-OF-SELECTION.
+
+  IF gt_output IS NOT INITIAL.
+    IF p_test IS INITIAL.
+      PERFORM f_send_cmx.
+      PERFORM f_send_to_cpi.
+    ENDIF.
+    PERFORM f_display.
+  ELSE.
+    WRITE: / 'No matching orders found.'.
+  ENDIF.
+
+
+
+
+FORM f_get_orders.
+
+  SELECT SINGLE atinn INTO @gv_atinn
+    FROM cabn
+   WHERE atnam = 'INTERFACE'.
+  IF sy-subrc <> 0.
+    MESSAGE 'Characteristic INTERFACE not found' TYPE 'E'.
+  ENDIF.
+
+  IF so_date-low IS INITIAL OR so_time-low IS INITIAL.
+    MESSAGE 'Check from Date and Time are mandatory' TYPE 'E'.
+  ENDIF.
+
+  " Per spec: IDAT1 not blank OR IDAT2 >= check date
+  SELECT *
+    FROM viaufkst
+    WHERE auart IN @so_auart
+      AND iwerk IN @so_werks
+      AND aufnr IN @so_aufnr
+      AND ( idat1 IS NOT INITIAL OR idat2 >= @so_date-low )
+    INTO TABLE @gt_orders.
+
+  IF gt_orders IS INITIAL.
+    MESSAGE 'No eligible maintenance orders found' TYPE 'I'.
+  ELSE.
+    WRITE: / |{ lines( gt_orders ) } eligible orders found.|.
+  ENDIF.
+
 ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  BDC_DYNPRO
-*&---------------------------------------------------------------------*
-FORM bdc_dynpro USING iv_program iv_dynpro
-                CHANGING ct_bdcdata TYPE bdcdata_tab.
-  CLEAR ls_bdcdata.
-  ls_bdcdata-program  = iv_program.
-  ls_bdcdata-dynpro   = iv_dynpro.
-  ls_bdcdata-dynbegin = 'X'.
-  APPEND ls_bdcdata TO ct_bdcdata.
+
+
+
+
+FORM f_prefetch_data.
+
+  DATA lt_objnr TYPE TABLE OF jest-objnr.
+
+  " Collect all object numbers for the fetched orders
+  LOOP AT gt_orders INTO gs_order.
+    APPEND gs_order-objnr TO lt_objnr.
+  ENDLOOP.
+
+  " Fetch JEST statuses (REL, TECO, LOCK, CMXC, CMXS)
+  SELECT objnr stat inact
+    FROM jest
+    INTO TABLE @gt_jest
+    FOR ALL ENTRIES IN @lt_objnr
+    WHERE objnr = @lt_objnr-table_line
+      AND stat IN ('I0002','I0045','I0043','E0010','E0014').
+
+  " Fetch INOB classification object (for EQUIP or FUNCLOC)
+  SELECT objek cuobj
+    FROM inob
+    INTO TABLE @gt_inob
+    FOR ALL ENTRIES IN @gt_orders
+    WHERE objek = @gt_orders-equnr
+       OR objek = @gt_orders-tplnr.
+
+  " Fetch AUSP characteristic values (INTERFACE)
+  SELECT objek atinn atwrt
+    FROM ausp
+    INTO TABLE @gt_ausp
+    FOR ALL ENTRIES IN @gt_inob
+    WHERE objek = @gt_inob-cuobj
+      AND atinn = @gv_atinn.
+
+  " Fetch latest change headers for orders
+  SELECT objectid udate utime
+    FROM cdhdr
+    INTO TABLE @gt_cdhdr
+    FOR ALL ENTRIES IN @gt_orders
+    WHERE objectclas = 'ORDER'
+      AND objectid    = CONCAT( sy-mandt, '30', gt_orders-aufnr ).
+
 ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  BDC_DYNPRO
-*&---------------------------------------------------------------------*
-FORM bdc_field USING iv_fnam iv_fval
-               CHANGING ct_bdcdata TYPE bdcdata_tab.
-  CLEAR ls_bdcdata.
-  ls_bdcdata-fnam = iv_fnam.
-  WRITE iv_fval TO ls_bdcdata-fval LEFT-JUSTIFIED.
-  APPEND ls_bdcdata TO ct_bdcdata.
+
+
+
+
+FORM f_check_status USING ps_order TYPE viaufkst.
+
+  DATA: lv_stat  TYPE jest-stat,
+        lv_inact TYPE jest-inact,
+        lv_vornr TYPE vornr,
+        lv_date  TYPE udate,
+        lv_time  TYPE utime,
+        lv_objnr TYPE jest-objnr,
+        lv_obj   TYPE cuobj,
+        lv_value TYPE atwrt.
+
+  lv_objnr = ps_order-objnr.
+
+  " 1. Find classification object (INOB)
+  READ TABLE gt_inob INTO DATA(ls_inob)
+    WITH KEY objek = COND #( WHEN ps_order-equnr IS NOT INITIAL
+                              THEN ps_order-equnr ELSE ps_order-tplnr ).
+  IF sy-subrc = 0.
+    lv_obj = ls_inob-cuobj.
+  ELSE.
+    RETURN.
+  ENDIF.
+
+  " 2. Check for Released or TECO (I0002 / I0045)
+  READ TABLE gt_jest INTO DATA(ls_rel)
+    WITH KEY objnr = lv_objnr stat = 'I0002' inact = ''.
+  IF sy-subrc <> 0.
+    READ TABLE gt_jest INTO DATA(ls_teco)
+      WITH KEY objnr = lv_objnr stat = 'I0045' inact = ''.
+    IF sy-subrc <> 0.
+      RETURN. " neither released nor teco
+    ENDIF.
+  ENDIF.
+
+  " 3. Check if CMXC (E0010) is active
+  READ TABLE gt_jest INTO DATA(ls_cmxc)
+    WITH KEY objnr = lv_objnr stat = 'E0010' inact = ''.
+  IF sy-subrc = 0.
+    RETURN. " CMXC still active, skip
+  ENDIF.
+
+  " 4. INTERFACE must be CMX
+  READ TABLE gt_ausp INTO DATA(ls_ausp)
+    WITH KEY objek = lv_obj atinn = gv_atinn.
+  IF sy-subrc <> 0 OR ls_ausp-atwrt <> 'CMX'.
+    RETURN.
+  ENDIF.
+
+  " 5. Change detection (from prefetched CDHDR)
+  READ TABLE gt_cdhdr INTO DATA(ls_hdr)
+    WITH KEY objectid = |{ sy-mandt }30{ ps_order-aufnr }|.
+  IF sy-subrc = 0.
+    lv_date = ls_hdr-udate.
+    lv_time = ls_hdr-utime.
+  ENDIF.
+
+  IF ( lv_date < so_date-low OR ( lv_date = so_date-low AND lv_time < so_time-low ) ).
+    " Check CMXS (E0014)
+    READ TABLE gt_jest INTO DATA(ls_cmxs)
+      WITH KEY objnr = lv_objnr stat = 'E0014' inact = ''.
+    IF sy-subrc = 0.
+      RETURN. " already sent
+    ENDIF.
+  ENDIF.
+
+  " 6. Lock handling (I0043)
+  READ TABLE gt_jest INTO DATA(ls_lock)
+    WITH KEY objnr = lv_objnr stat = 'I0043'.
+  IF sy-subrc = 0.
+    IF ls_lock-inact IS INITIAL.
+      lv_stat = 'I0043'.
+    ELSE.
+      lv_stat = 'I0002'.
+    ENDIF.
+  ELSE.
+    lv_stat = 'I0002'. " default REL
+  ENDIF.
+
+  " 7. Get operation number
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+
+  " 8. Prepare output
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+
 ENDFORM.
