@@ -84,7 +84,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
 
     " Last CMXS change timestamp
-    SELECT MAX(udate) AS udate, MAX(utime) AS utime
+    SELECT MAX( udate ), MAX( utime )
       INTO (lv_cmxs_date, lv_cmxs_time)
       FROM cdhdr
      WHERE objectclas = 'ORDER'
@@ -92,7 +92,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     ENDSELECT.
 
     " Latest LKD status change timestamp (active/inactive)
-    SELECT MAX(udate) AS udate, MAX(utime) AS utime
+    SELECT MAX( udate ), MAX( utime )
       INTO (lv_lock_date, lv_lock_time)
       FROM cdhdr
      WHERE objectclas = 'STATUS'
@@ -104,12 +104,12 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     IF ( lv_lock_date IS INITIAL ) OR
        ( lv_lock_date < lv_cmxs_date ) OR
        ( lv_lock_date = lv_cmxs_date AND lv_lock_time <= lv_cmxs_time ).
-      RETURN. " No status change since last CMXS send
+      RETURN. " No change since last CMXS send
     ENDIF.
   ENDIF.
 
   "---------------------------------------------------
-  " Determine status to display
+  " Determine display status
   "---------------------------------------------------
   IF lv_has_lkd = abap_true.
     lv_stat = 'I0043'. " Locked
@@ -120,7 +120,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Get first valid operation and prepare output
+  " Get operation and prepare output
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
