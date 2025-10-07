@@ -22,9 +22,9 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   " Classification object (equipment or functional location)
   "---------------------------------------------------
   IF ps_order-equnr IS NOT INITIAL.
-    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
   ELSE.
-    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-tplnr.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
   ENDIF.
   IF lv_obj IS INITIAL.
     RETURN.
@@ -38,8 +38,8 @@ FORM f_check_status USING ps_order TYPE viaufkst.
 
   SELECT stat, inact
     FROM jest
-    INTO TABLE lt_status
-    WHERE objnr = ps_order-objnr.
+    INTO TABLE @lt_status
+    WHERE objnr = @ps_order-objnr.
 
   LOOP AT lt_status INTO ls_status.
     CASE ls_status-stat.
@@ -52,7 +52,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDLOOP.
 
   "---------------------------------------------------
-  " Must have REL or TECO to qualify
+  " Must have REL or TECO
   "---------------------------------------------------
   IF lv_has_rel = abap_false AND lv_has_teco = abap_false.
     RETURN.
@@ -61,50 +61,48 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   "---------------------------------------------------
   " Interface characteristic must be CMX
   "---------------------------------------------------
-  SELECT SINGLE atwrt INTO lv_value
+  SELECT SINGLE atwrt INTO @lv_value
     FROM ausp
-   WHERE objek = lv_obj
-     AND atinn = gv_atinn.
+   WHERE objek = @lv_obj
+     AND atinn = @gv_atinn.
   IF sy-subrc <> 0 OR lv_value <> 'CMX'.
     RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " LKD + no CMXS → skip (Scenario 1)
+  " LKD + no CMXS → skip
   "---------------------------------------------------
   IF lv_has_lkd = abap_true AND lv_has_cmxs = abap_false.
     RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " CMXS exists → check if LKD/UNLKD changed after last send (Scenario 2 & 3)
+  " CMXS exists → compare LKD/UNLKD vs CMXS timestamps
   "---------------------------------------------------
   IF lv_has_cmxs = abap_true.
 
     CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
 
-    " Last CMXS change timestamp
-    SELECT MAX( udate ), MAX( utime )
-      INTO (lv_cmxs_date, lv_cmxs_time)
+    " Last CMXS change
+    SELECT MAX( udate ) , MAX( utime )
+      INTO ( @lv_cmxs_date , @lv_cmxs_time )
       FROM cdhdr
      WHERE objectclas = 'ORDER'
-       AND objectid    = lv_objid.
-    ENDSELECT.
+       AND objectid    = @lv_objid.
 
-    " Latest LKD status change timestamp (active/inactive)
-    SELECT MAX( udate ), MAX( utime )
-      INTO (lv_lock_date, lv_lock_time)
+    " Latest LKD change
+    SELECT MAX( udate ) , MAX( utime )
+      INTO ( @lv_lock_date , @lv_lock_time )
       FROM cdhdr
      WHERE objectclas = 'STATUS'
-       AND objectid    = ps_order-objnr
+       AND objectid    = @ps_order-objnr
        AND ( tcode = 'I0043' OR tcode = 'LOCK' ).
-    ENDSELECT.
 
     " Compare timestamps
     IF ( lv_lock_date IS INITIAL ) OR
        ( lv_lock_date < lv_cmxs_date ) OR
        ( lv_lock_date = lv_cmxs_date AND lv_lock_time <= lv_cmxs_time ).
-      RETURN. " No change since last CMXS send
+      RETURN.
     ENDIF.
   ENDIF.
 
