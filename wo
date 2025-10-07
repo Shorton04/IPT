@@ -16,7 +16,6 @@ INCLUDE zin_cmx_workorder_f01.
 START-OF-SELECTION.
 
   PERFORM f_get_orders.          "Fetch orders
-
   LOOP AT gt_orders INTO gs_order.
     PERFORM f_check_status USING gs_order.
   ENDLOOP.
