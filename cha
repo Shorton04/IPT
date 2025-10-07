@@ -4,10 +4,16 @@
 FORM f_get_operation USING ps_order TYPE viaufkst
                      CHANGING pv_vornr TYPE afvc-vornr.
 
-  DATA: lt_ops   TYPE TABLE OF afvc,
-        ls_op    TYPE afvc,
-        lv_aufpl TYPE afko-aufpl,
+  DATA: lv_aufpl TYPE afko-aufpl,
         lv_stat  TYPE jest-stat.
+
+  " Local structure for operations
+  DATA: BEGIN OF ls_op,
+          vornr TYPE afvc-vornr,
+          objnr TYPE afvc-objnr,
+        END OF ls_op.
+
+  DATA: lt_ops TYPE TABLE OF ls_op.
 
   CLEAR pv_vornr.
 
@@ -34,6 +40,7 @@ FORM f_get_operation USING ps_order TYPE viaufkst
 
   " 3️⃣ Loop and pick the first active (not deleted) operation
   LOOP AT lt_ops INTO ls_op.
+
     SELECT SINGLE stat
       FROM jest
      WHERE objnr = @ls_op-objnr
@@ -45,6 +52,7 @@ FORM f_get_operation USING ps_order TYPE viaufkst
       pv_vornr = ls_op-vornr.
       EXIT. " Found valid operation
     ENDIF.
+
   ENDLOOP.
 
 ENDFORM.
