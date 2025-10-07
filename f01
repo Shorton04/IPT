@@ -1,5 +1,5 @@
 *---------------------------------------------------------------------*
-* Prefetch related master data (classic syntax for ECC/S4)
+* Prefetch related master data (S/4HANA strict SQL mode)
 *---------------------------------------------------------------------*
 FORM f_prefetch_data.
 
@@ -36,22 +36,22 @@ FORM f_prefetch_data.
   " 1) JEST statuses
   "----------------------------------------------------------
   IF lt_objnr IS NOT INITIAL.
-    SELECT objnr stat inact
-      INTO TABLE gt_jest
+    SELECT objnr, stat, inact
       FROM jest
-      FOR ALL ENTRIES IN lt_objnr
-      WHERE objnr = lt_objnr-table_line.
+      INTO TABLE @gt_jest
+      FOR ALL ENTRIES IN @lt_objnr
+      WHERE objnr = @lt_objnr-table_line.
   ENDIF.
 
   "----------------------------------------------------------
   " 2) INOB classification links
   "----------------------------------------------------------
   IF lt_objek IS NOT INITIAL.
-    SELECT objek cuobj
-      INTO TABLE gt_inob
+    SELECT objek, cuobj
       FROM inob
-      FOR ALL ENTRIES IN lt_objek
-      WHERE objek = lt_objek-table_line.
+      INTO TABLE @gt_inob
+      FOR ALL ENTRIES IN @lt_objek
+      WHERE objek = @lt_objek-table_line.
   ENDIF.
 
   "----------------------------------------------------------
@@ -65,11 +65,11 @@ FORM f_prefetch_data.
     SORT lt_cuobj. DELETE ADJACENT DUPLICATES FROM lt_cuobj.
 
     IF lt_cuobj IS NOT INITIAL.
-      SELECT objek atinn atwrt
-        INTO TABLE gt_ausp
+      SELECT objek, atinn, atwrt
         FROM ausp
-        FOR ALL ENTRIES IN lt_cuobj
-        WHERE objek = lt_cuobj-table_line.
+        INTO TABLE @gt_ausp
+        FOR ALL ENTRIES IN @lt_cuobj
+        WHERE objek = @lt_cuobj-table_line.
     ENDIF.
   ENDIF.
 
@@ -77,12 +77,12 @@ FORM f_prefetch_data.
   " 4) CDHDR changes
   "----------------------------------------------------------
   IF lt_objectid IS NOT INITIAL.
-    SELECT objectid udate utime
-      INTO TABLE gt_cdhdr
+    SELECT objectid, udate, utime
       FROM cdhdr
-      FOR ALL ENTRIES IN lt_objectid
+      INTO TABLE @gt_cdhdr
+      FOR ALL ENTRIES IN @lt_objectid
       WHERE objectclas = 'ORDER'
-        AND objectid   = lt_objectid-table_line.
+        AND objectid   = @lt_objectid-table_line.
   ENDIF.
 
 ENDFORM.
