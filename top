@@ -15,15 +15,16 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_lock_date  TYPE udate,
         lv_lock_time  TYPE utime,
         lv_cmxs_date  TYPE udate,
-        lv_cmxs_time  TYPE utime.
+        lv_cmxs_time  TYPE utime,
+        lv_objid      TYPE c LENGTH 20.
 
   "---------------------------------------------------
   " Classification object (equipment or functional location)
   "---------------------------------------------------
   IF ps_order-equnr IS NOT INITIAL.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
   ELSE.
-    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
+    SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-tplnr.
   ENDIF.
   IF lv_obj IS INITIAL.
     RETURN.
@@ -32,12 +33,15 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   "---------------------------------------------------
   " Detect current system statuses
   "---------------------------------------------------
+  DATA lt_status TYPE TABLE OF jest.
+  DATA ls_status LIKE LINE OF lt_status.
+
   SELECT stat, inact
     FROM jest
-    INTO TABLE @DATA(lt_status)
-    WHERE objnr = @ps_order-objnr.
+    INTO TABLE lt_status
+    WHERE objnr = ps_order-objnr.
 
-  LOOP AT lt_status INTO DATA(ls_status).
+  LOOP AT lt_status INTO ls_status.
     CASE ls_status-stat.
       WHEN 'I0002'. IF ls_status-inact IS INITIAL. lv_has_rel  = abap_true. ENDIF. " REL
       WHEN 'I0045'. IF ls_status-inact IS INITIAL. lv_has_teco = abap_true. ENDIF. " TECO
@@ -57,10 +61,10 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   "---------------------------------------------------
   " Interface characteristic must be CMX
   "---------------------------------------------------
-  SELECT SINGLE atwrt INTO @lv_value
+  SELECT SINGLE atwrt INTO lv_value
     FROM ausp
-   WHERE objek = @lv_obj
-     AND atinn = @gv_atinn.
+   WHERE objek = lv_obj
+     AND atinn = gv_atinn.
   IF sy-subrc <> 0 OR lv_value <> 'CMX'.
     RETURN.
   ENDIF.
@@ -76,110 +80,49 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   " CMXS exists → check if LKD/UNLKD changed after last send (Scenario 2 & 3)
   "---------------------------------------------------
   IF lv_has_cmxs = abap_true.
-    CONCATENATE sy-mandt '30' ps_order-aufnr INTO @DATA(lv_objid).
 
-    " Last CMXS change
+    CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+
+    " Last CMXS change timestamp
     SELECT MAX(udate) AS udate, MAX(utime) AS utime
       INTO (lv_cmxs_date, lv_cmxs_time)
       FROM cdhdr
      WHERE objectclas = 'ORDER'
-       AND objectid    = @lv_objid.
+       AND objectid    = lv_objid.
+    ENDSELECT.
 
-    " Latest LKD change (active or inactive)
+    " Latest LKD status change timestamp (active/inactive)
     SELECT MAX(udate) AS udate, MAX(utime) AS utime
       INTO (lv_lock_date, lv_lock_time)
       FROM cdhdr
      WHERE objectclas = 'STATUS'
-       AND objectid    = @ps_order-objnr
+       AND objectid    = ps_order-objnr
        AND ( tcode = 'I0043' OR tcode = 'LOCK' ).
+    ENDSELECT.
 
     " Compare timestamps
     IF ( lv_lock_date IS INITIAL ) OR
        ( lv_lock_date < lv_cmxs_date ) OR
        ( lv_lock_date = lv_cmxs_date AND lv_lock_time <= lv_cmxs_time ).
-      RETURN. " No status change since last send
+      RETURN. " No status change since last CMXS send
     ENDIF.
   ENDIF.
 
   "---------------------------------------------------
-  " Get first valid operation
-  "---------------------------------------------------
-  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-
-  "---------------------------------------------------
-  " Prepare output (always CREATE per funct)
+  " Determine status to display
   "---------------------------------------------------
   IF lv_has_lkd = abap_true.
-    lv_stat = 'I0043'.
+    lv_stat = 'I0043'. " Locked
   ELSEIF lv_has_teco = abap_true.
-    lv_stat = 'I0045'.
+    lv_stat = 'I0045'. " TECO
   ELSE.
-    lv_stat = 'I0002'.
+    lv_stat = 'I0002'. " REL
   ENDIF.
 
+  "---------------------------------------------------
+  " Get first valid operation and prepare output
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-
-ENDFORM.
-
-
-
-
-
-
-
-
-*---------------------------------------------------------------------*
-* Prepare output for ALV + JSON (Funct-compliant: always CREATE)
-*---------------------------------------------------------------------*
-FORM f_prepare_output USING ps_order TYPE viaufkst
-                            pv_vornr TYPE vornr
-                            pv_stat  TYPE jest-stat.
-
-  CLEAR gs_output.
-
-  "---------------------------------------------------
-  " Always CREATE per functional specification
-  "---------------------------------------------------
-  gs_output-OrderMessageStatus = 'CREATE'.
-
-  "---------------------------------------------------
-  " Core order information
-  "---------------------------------------------------
-  gs_output-Plant                     = ps_order-iwerk.
-  gs_output-MaintenanceOrder          = ps_order-aufnr.
-  gs_output-MaintenanceOrderOperation = pv_vornr.
-  gs_output-MaintOrdBasicStartDate    = ps_order-gstrp.
-  gs_output-MaintOrdBasicEndDate      = ps_order-gltrp.
-  gs_output-LatestAcceptableComplDate = ps_order-lacd_date.
-  gs_output-SystemId                  = sy-sysid.
-
-  "---------------------------------------------------
-  " Determine readable System Status text (REL, TECO, LKD)
-  "---------------------------------------------------
-  SELECT SINGLE txt04 INTO gs_output-SystemStatusText
-    FROM tj02t
-   WHERE istat = pv_stat
-     AND spras = 'E'.
-
-  "---------------------------------------------------
-  " Technical Object (Equipment or Functional Location)
-  "---------------------------------------------------
-  IF ps_order-equnr IS NOT INITIAL.
-    gs_output-TechnicalObject = ps_order-equnr.
-  ELSE.
-    gs_output-TechnicalObject = ps_order-tplnr.
-  ENDIF.
-
-  "---------------------------------------------------
-  " Message text for ALV/log visibility
-  "---------------------------------------------------
-  CASE pv_stat.
-    WHEN 'I0043'. gs_output-Msg = 'Order locked – sent as CREATE to CMX'.
-    WHEN 'I0045'. gs_output-Msg = 'Order TECO – sent as CREATE to CMX'.
-    WHEN 'I0002'. gs_output-Msg = 'Order REL – sent as CREATE to CMX'.
-    WHEN OTHERS.  gs_output-Msg = 'Order sent as CREATE to CMX'.
-  ENDCASE.
-
-  APPEND gs_output TO gt_output.
 
 ENDFORM.
