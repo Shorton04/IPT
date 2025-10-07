@@ -5,15 +5,17 @@ FORM f_get_operation USING ps_order TYPE viaufkst
                      CHANGING pv_vornr TYPE afvc-vornr.
 
   DATA: lv_aufpl TYPE afko-aufpl,
-        lv_stat  TYPE jest-stat.
+        lv_stat  TYPE jest-stat,
+        pv_found TYPE abap_bool VALUE abap_false.
 
-  " Local structure for operations
-  DATA: BEGIN OF ls_op,
-          vornr TYPE afvc-vornr,
-          objnr TYPE afvc-objnr,
-        END OF ls_op.
+  " Define structure and table for operations
+  TYPES: BEGIN OF ty_op,
+           vornr TYPE afvc-vornr,
+           objnr TYPE afvc-objnr,
+         END OF ty_op.
 
-  DATA: lt_ops TYPE TABLE OF ls_op.
+  DATA: ls_op  TYPE ty_op,
+        lt_ops TYPE TABLE OF ty_op.
 
   CLEAR pv_vornr.
 
@@ -50,9 +52,14 @@ FORM f_get_operation USING ps_order TYPE viaufkst
 
     IF sy-subrc <> 0.
       pv_vornr = ls_op-vornr.
+      pv_found = abap_true.
       EXIT. " Found valid operation
     ENDIF.
 
   ENDLOOP.
+
+  IF pv_found = abap_false.
+    pv_vornr = ''.
+  ENDIF.
 
 ENDFORM.
