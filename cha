@@ -1,6 +1,3 @@
-*---------------------------------------------------------------------*
-* Check status
-*---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
   DATA: lv_obj           TYPE cuobj,
@@ -78,7 +75,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   IF sy-subrc = 0.
     lv_cmxs_active = abap_true.
     CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-    SELECT MAX(udate) AS max_date, MAX(utime) AS max_time
+    SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
       INTO ( @lv_cmxs_date, @lv_cmxs_time )
       FROM cdhdr
      WHERE objectclas = 'ORDER' AND objectid = @lv_objid.
@@ -88,7 +85,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   " Step 5: Get latest ORDER change timestamp
   "---------------------------------------------------
   CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-  SELECT MAX(udate) AS max_date, MAX(utime) AS max_time
+  SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
     INTO ( @lv_date, @lv_time )
     FROM cdhdr
    WHERE objectclas = 'ORDER' AND objectid = @lv_objid.
@@ -118,22 +115,22 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   " Step 7: Handle lock/unlock scenarios
   "---------------------------------------------------
   IF lv_locked_active = abap_true AND lv_cmxs_active = abap_false.
-    gs_output-OrderMessageStatus = 'SKIP'.
+    gs_output-OrderMessageStatus = 'CREATE'.
     gs_output-Plant              = ps_order-iwerk.
     gs_output-MaintenanceOrder   = ps_order-aufnr.
-    gs_output-SystemStatusText   = 'LOCKED'.
-    gs_output-Msg                = 'Order locked before CMXS, skip (Scenario 1)'.
+    gs_output-SystemStatusText   = 'LKD'.
+    gs_output-Msg                = 'Order locked before CMXS, skip'.
     APPEND gs_output TO gt_output.
-    PERFORM f_write_log USING ps_order-aufnr '' ps_order-iwerk 'LOCKED' gs_output-Msg.
+    PERFORM f_write_log USING ps_order-aufnr '' ps_order-iwerk 'LKD' gs_output-Msg.
     RETURN.
   ENDIF.
 
   IF lv_locked_active = abap_true AND lv_cmxs_active = abap_true.
-    gs_output-Msg = 'Order locked after CMXS (Scenario 2) – send as LKD'.
+    gs_output-Msg = 'Order locked after CMXS – send as LKD'.
   ENDIF.
 
   IF lv_locked_active = abap_false AND lv_cmxs_active = abap_true.
-    gs_output-Msg = 'Order unlocked / REL after CMXS (Scenario 3) – send as REL'.
+    gs_output-Msg = 'Order unlocked / REL after CMXS – send as REL'.
   ENDIF.
 
   "---------------------------------------------------
