@@ -1,5 +1,6 @@
 *---------------------------------------------------------------------*
-* Check status (Final version - handles Cases 1–4)
+* FORM f_check_status – FINAL version (D30 / Client 100)
+* Handles Case 1–4 from funct.pdf
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
@@ -20,7 +21,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_cmxs_time     TYPE utime.
 
   "---------------------------------------------------
-  " Classification object (equipment or functional location)
+  " Step 1: Classification object (equipment/funct. loc.)
   "---------------------------------------------------
   IF ps_order-equnr IS NOT INITIAL.
     SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
@@ -33,7 +34,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 1: Check REL / TECO
+  " Step 2: Check REL / TECO
   "---------------------------------------------------
   SELECT SINGLE stat FROM jest INTO @lv_stat
    WHERE objnr = @ps_order-objnr AND stat = 'I0002' AND inact = ''.
@@ -44,11 +45,11 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   IF sy-subrc = 0. lv_teco_active = abap_true. ENDIF.
 
   IF lv_rel_active = abap_false AND lv_teco_active = abap_false.
-    RETURN.
+    RETURN. " Not released or TECO → skip
   ENDIF.
 
   "---------------------------------------------------
-  " Step 2: Check CMXC (Confirmed)
+  " Step 3: Check CMXC (Confirmed)
   "---------------------------------------------------
   SELECT SINGLE inact FROM jest INTO @lv_inact
    WHERE objnr = @ps_order-objnr AND stat = 'E0010'.
@@ -57,28 +58,27 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   IF lv_cmx_active = abap_true AND lv_teco_active = abap_false.
-    RETURN.
+    RETURN. " CMXC active but not TECO → skip
   ENDIF.
 
   "---------------------------------------------------
-  " Step 3: INTERFACE must be CMX
+  " Step 4: Interface type must be CMX
   "---------------------------------------------------
   SELECT SINGLE atwrt INTO @lv_value
     FROM ausp
    WHERE objek = @lv_obj AND atinn = @gv_atinn.
   IF sy-subrc <> 0 OR lv_value <> 'CMX'.
-    RETURN.
+    RETURN. " Not a CMX order
   ENDIF.
 
   "---------------------------------------------------
-  " Step 4: Detect CMXS (Sent to CMX)
+  " Step 5: Detect CMXS (Sent to CMX)
   "---------------------------------------------------
   SELECT SINGLE stat FROM jest INTO @lv_stat
    WHERE objnr = @ps_order-objnr AND stat = 'E0014' AND inact = ''.
   IF sy-subrc = 0.
     lv_cmxs_active = abap_true.
-
-    CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+    CONCATENATE sy-mandt '3' ps_order-aufnr INTO lv_objid.
     SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
       INTO ( @lv_cmxs_date, @lv_cmxs_time )
       FROM cdhdr
@@ -86,16 +86,16 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 5: Get latest ORDER change timestamp
+  " Step 6: Get latest order change timestamp
   "---------------------------------------------------
-  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+  CONCATENATE sy-mandt '3' ps_order-aufnr INTO lv_objid.
   SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
     INTO ( @lv_date, @lv_time )
     FROM cdhdr
    WHERE objectclas = 'ORDER' AND objectid = @lv_objid.
 
   "---------------------------------------------------
-  " Step 6: Check lock status (I0043)
+  " Step 7: Check lock status (I0043)
   "---------------------------------------------------
   SELECT SINGLE inact FROM jest INTO @lv_inact
    WHERE objnr = @ps_order-objnr AND stat = 'I0043'.
@@ -108,41 +108,42 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 7: Improved timestamp + lock/unlock logic
+  " Step 8: Improved timestamp & unlock logic
   "---------------------------------------------------
   IF lv_cmxs_active = abap_true.
-    " Always include if locked/unlocked OR any newer change exists
-    IF lv_locked_active = abap_true OR lv_locked_active = abap_false.
-      " continue
+    " Always include if unlocked or header changed after CMXS
+    IF lv_locked_active = abap_false.
+      " Continue (unlock should resend as REL)
     ELSEIF ( lv_date IS INITIAL
           OR lv_date < lv_cmxs_date
           OR ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
-      RETURN. " No new change
+      RETURN. " No newer change and still locked
     ENDIF.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 8: Handle lock/unlock scenarios
+  " Step 9: Skip locked before CMXS
   "---------------------------------------------------
   IF lv_locked_active = abap_true AND lv_cmxs_active = abap_false.
-    RETURN. " Locked before CMXS → skip
+    RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 9: Get first valid operation
+  " Step 10: Get first valid operation
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
   "---------------------------------------------------
-  " Step 10: Control ALV visibility
+  " Step 11: Control ALV visibility
   "---------------------------------------------------
   IF lv_teco_active = abap_false AND lv_locked_active = abap_false
      AND lv_cmxs_active = abap_true.
-    RETURN. " REL + CMXS already sent → don't show
+    " Changed REL with CMXS still shows now (fixed)
+    " Do not return here anymore for unlock/change
   ENDIF.
 
   "---------------------------------------------------
-  " Step 11: Prepare output
+  " Step 12: Prepare output
   "---------------------------------------------------
   IF lv_locked_active = abap_true.
     lv_stat = 'I0043'. " Locked
