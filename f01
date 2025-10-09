@@ -104,3 +104,91 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
+
+
+
+
+
+*---------------------------------------------------------------------*
+* Send orders to CMX (final funct-compliant version)
+*---------------------------------------------------------------------*
+FORM f_send_cmx.
+
+  DATA: lv_mode TYPE char10.
+
+  IF p_test = abap_true.
+    lv_mode = 'TEST'.
+  ELSE.
+    lv_mode = 'LIVE'.
+  ENDIF.
+
+  LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
+
+    "---------------------------------------------------
+    " Skip LKD / TECO in test but still show in ALV
+    "---------------------------------------------------
+    IF p_test = abap_true.
+      <ls_output_row>-msg = |[Test Mode] Would send order { <ls_output_row>-MaintenanceOrder } to CMX|.
+      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
+                                 <ls_output_row>-MaintenanceOrderOperation
+                                 <ls_output_row>-Plant
+                                 'CMXS'
+                                 <ls_output_row>-msg.
+      CONTINUE.
+    ENDIF.
+
+    "---------------------------------------------------
+    " Live Mode - Force CMXS refresh
+    "---------------------------------------------------
+    DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
+          lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
+          lt_methods TYPE TABLE OF bapi_alm_order_method,
+          lt_return  TYPE TABLE OF bapiret2,
+          ls_return  TYPE bapiret2.
+
+    CLEAR: lt_header, lt_status, lt_methods, lt_return.
+
+    " Delete and re-set CMXS to refresh timestamp
+    APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS'
+                    method = 'DELETE'
+                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu inactive = 'X' ) TO lt_status.
+
+    APPEND VALUE #( refnumber = '00002' objecttype = 'USERSTATUS'
+                    method = 'CHANGE'
+                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu inactive = '' ) TO lt_status.
+
+    APPEND VALUE #( refnumber = '00003' objecttype = 'ORDER'
+                    method = 'SAVE'
+                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+
+    CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+      TABLES
+        it_header     = lt_header
+        it_methods    = lt_methods
+        it_userstatus = lt_status
+        return        = lt_return.
+
+    READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
+    IF sy-subrc = 0.
+      <ls_output_row>-msg = ls_return-message(72).
+      CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    ELSE.
+      <ls_output_row>-msg = 'CMXS updated successfully'.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = 'X'.
+    ENDIF.
+
+    PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
+                               <ls_output_row>-MaintenanceOrderOperation
+                               <ls_output_row>-Plant
+                               'CMXS'
+                               <ls_output_row>-msg.
+
+  ENDLOOP.
+
+  COMMIT WORK.
+
+ENDFORM.
