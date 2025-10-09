@@ -1,8 +1,11 @@
 "---------------------------------------------------
 " Step 4: Detect CMXS (Sent to CMX)
 "---------------------------------------------------
-DATA: lt_jcds TYPE TABLE OF jcds,
-      ls_jcds TYPE jcds.
+DATA: BEGIN OF ls_jcds,
+        udate TYPE jcds-udate,
+        utime TYPE jcds-utime,
+      END OF ls_jcds,
+      lt_jcds LIKE TABLE OF ls_jcds.
 
 SELECT udate, utime
   FROM jcds
