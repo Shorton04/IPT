@@ -1,24 +1,182 @@
-"---------------------------------------------------
-" Step 5: Get latest ORDER change timestamp (CDHDR)
-"---------------------------------------------------
+FORM f_check_status USING ps_order TYPE viaufkst.
 
-" Build correct Object ID: MANDT + '3' + AUFNR  (ex: 10030000060000121)
-CONCATENATE sy-mandt '3' ps_order-aufnr INTO lv_objid.
+  DATA: lv_obj           TYPE cuobj,
+        lv_value         TYPE atwrt,
+        lv_stat          TYPE jest-stat,
+        lv_date          TYPE udate,
+        lv_time          TYPE utime,
+        lv_objid         TYPE c LENGTH 20,
+        lv_inact         TYPE jest-inact,
+        lv_vornr         TYPE vornr,
+        lv_rel_active    TYPE abap_bool VALUE abap_false,
+        lv_teco_active   TYPE abap_bool VALUE abap_false,
+        lv_cmx_active    TYPE abap_bool VALUE abap_false,
+        lv_cmxs_active   TYPE abap_bool VALUE abap_false,
+        lv_locked_active TYPE abap_bool VALUE abap_false,
+        lv_cmxs_date     TYPE udate,
+        lv_cmxs_time     TYPE utime.
 
-SELECT MAX( udate ) AS max_date,
-       MAX( utime ) AS max_time
-  INTO ( @lv_date, @lv_time )
-  FROM cdhdr
- WHERE objectclas = 'ORDER'
-   AND objectid    = @lv_objid.
-
-"---------------------------------------------------
-" Step 5.1: Skip if no newer change since CMXS
-"---------------------------------------------------
-IF lv_cmxs_active = abap_true.
-  IF ( lv_date IS INITIAL
-    OR lv_date < lv_cmxs_date
-    OR ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
-    RETURN. " No new change after last CMXS
+  "---------------------------------------------------
+  " Classification object (equipment or functional location)
+  "---------------------------------------------------
+  IF ps_order-equnr IS NOT INITIAL.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-equnr.
+  ELSE.
+    SELECT SINGLE cuobj INTO @lv_obj FROM inob WHERE objek = @ps_order-tplnr.
   ENDIF.
-ENDIF.
+
+  IF lv_obj IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 1: Check REL and TECO
+  "---------------------------------------------------
+  SELECT SINGLE stat FROM jest INTO @lv_stat
+   WHERE objnr = @ps_order-objnr AND stat = 'I0002' AND inact = ''.
+  IF sy-subrc = 0. lv_rel_active = abap_true. ENDIF.
+
+  SELECT SINGLE stat FROM jest INTO @lv_stat
+   WHERE objnr = @ps_order-objnr AND stat = 'I0045' AND inact = ''.
+  IF sy-subrc = 0. lv_teco_active = abap_true. ENDIF.
+
+  IF lv_rel_active = abap_false AND lv_teco_active = abap_false.
+    RETURN. " Skip orders that are not REL or TECO
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 2: Check CMXC (Confirmed)
+  "---------------------------------------------------
+  SELECT SINGLE inact FROM jest INTO @lv_inact
+   WHERE objnr = @ps_order-objnr AND stat = 'E0010'.
+  IF sy-subrc = 0 AND lv_inact IS INITIAL.
+    lv_cmx_active = abap_true.
+  ENDIF.
+
+  IF lv_cmx_active = abap_true AND lv_teco_active = abap_false.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 3: INTERFACE must be CMX
+  "---------------------------------------------------
+  SELECT SINGLE atwrt INTO @lv_value
+    FROM ausp
+   WHERE objek = @lv_obj AND atinn = @gv_atinn.
+  IF sy-subrc <> 0 OR lv_value <> 'CMX'.
+    RETURN.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 4: Detect CMXS (Sent to CMX)
+  "---------------------------------------------------
+  SELECT SINGLE udate, utime
+    INTO (@lv_cmxs_date, @lv_cmxs_time)
+    FROM jcds
+   WHERE objnr = @ps_order-objnr
+     AND stat = 'E0014'
+     AND inact = ''
+   ORDER BY udate DESCENDING, utime DESCENDING.
+
+  IF sy-subrc = 0.
+    lv_cmxs_active = abap_true.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 5: Get latest ORDER change timestamp
+  "---------------------------------------------------
+  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+  SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
+    INTO ( @lv_date, @lv_time )
+    FROM cdhdr
+   WHERE objectclas = 'ORDER'
+     AND objectid   = @lv_objid.
+
+  "---------------------------------------------------
+  " Step 5.1: Skip if no newer change since CMXS
+  "---------------------------------------------------
+  IF lv_cmxs_active = abap_true.
+    IF ( lv_date IS INITIAL
+      OR lv_date < lv_cmxs_date
+      OR ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 5.2: Apply selection-screen 'From Date/Time' filter
+  "---------------------------------------------------
+  IF p_from_date IS NOT INITIAL.
+    IF lv_date < p_from_date OR ( lv_date = p_from_date AND lv_time < p_from_time ).
+      RETURN. " Skip orders changed before selection timeframe
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 6: Check lock status (I0043)
+  "---------------------------------------------------
+  SELECT SINGLE inact FROM jest INTO @lv_inact
+   WHERE objnr = @ps_order-objnr AND stat = 'I0043'.
+  IF sy-subrc = 0.
+    IF lv_inact IS INITIAL.
+      lv_locked_active = abap_true.
+    ELSE.
+      lv_locked_active = abap_false.
+    ENDIF.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 7: Handle lock/unlock scenarios
+  "---------------------------------------------------
+  IF lv_locked_active = abap_true AND lv_cmxs_active = abap_false.
+    gs_output-OrderMessageStatus = 'CREATE'.
+    gs_output-Plant              = ps_order-iwerk.
+    gs_output-MaintenanceOrder   = ps_order-aufnr.
+    gs_output-SystemStatusText   = 'LKD'.
+    gs_output-Msg                = 'Order locked before CMXS, skip'.
+    APPEND gs_output TO gt_output.
+    PERFORM f_write_log USING ps_order-aufnr '' ps_order-iwerk 'LKD' gs_output-Msg.
+    RETURN.
+  ENDIF.
+
+  IF lv_locked_active = abap_true AND lv_cmxs_active = abap_true.
+    gs_output-Msg = 'Order locked after CMXS – send as LKD'.
+  ENDIF.
+
+  IF lv_locked_active = abap_false AND lv_cmxs_active = abap_true.
+    gs_output-Msg = 'Order unlocked / REL after CMXS – send as REL'.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 8: Get first valid operation
+  "---------------------------------------------------
+  PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
+
+  "---------------------------------------------------
+  " Step 9: Control ALV visibility
+  "---------------------------------------------------
+  " Skip REL orders that already have CMXS
+  IF lv_teco_active = abap_false AND lv_locked_active = abap_false
+     AND lv_cmxs_active = abap_true.
+    RETURN. " REL + CMXS already sent → don't show in ALV
+  ENDIF.
+
+  " Always show TECO orders for case 3
+  IF lv_teco_active = abap_true.
+    gs_output-SystemStatusText = 'TECO'.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 10: Prepare output
+  "---------------------------------------------------
+  IF lv_locked_active = abap_true.
+    lv_stat = 'I0043'. " Locked
+  ELSEIF lv_teco_active = abap_true.
+    lv_stat = 'I0045'. " TECO
+  ELSE.
+    lv_stat = 'I0002'. " REL
+  ENDIF.
+
+  PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+
+ENDFORM.
