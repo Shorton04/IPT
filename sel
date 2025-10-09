@@ -11,7 +11,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
                   so_date  FOR sy-datum NO-EXTENSION,       "Check from Date
                   so_time  FOR sy-uzeit NO-EXTENSION.       "Check from Time
 
-  PARAMETERS: p_test AS CHECKBOX DEFAULT ''.               "Test Run Flag
+  PARAMETERS: p_test      AS CHECKBOX DEFAULT ''.   "Test Run Flag
 
 SELECTION-SCREEN END OF BLOCK b1.
 
