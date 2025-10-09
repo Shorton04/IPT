@@ -1,34 +1,7 @@
 "---------------------------------------------------
-" Step 4: Detect CMXS (Sent to CMX)
-"---------------------------------------------------
-DATA: BEGIN OF ls_jcds,
-        udate TYPE jcds-udate,
-        utime TYPE jcds-utime,
-      END OF ls_jcds,
-      lt_jcds LIKE TABLE OF ls_jcds.
-
-CLEAR: lv_cmxs_active, lv_cmxs_date, lv_cmxs_time.
-
-SELECT udate, utime
-  FROM jcds
-  INTO TABLE @lt_jcds
-  WHERE objnr = @ps_order-objnr
-    AND stat  = 'E0014'
-    AND inact = ''.
-
-IF sy-subrc = 0.
-  SORT lt_jcds BY udate DESCENDING utime DESCENDING.
-  READ TABLE lt_jcds INDEX 1 INTO ls_jcds.
-  IF sy-subrc = 0.
-    lv_cmxs_active = abap_true.
-    lv_cmxs_date = ls_jcds-udate.
-    lv_cmxs_time = ls_jcds-utime.
-  ENDIF.
-ENDIF.
-
-"---------------------------------------------------
 " Step 5: Get latest ORDER change timestamp (CDHDR)
 "---------------------------------------------------
+DATA(lv_objclass) = 'ORDER'.
 
 " Build correct Object ID: MANDT + '30' + AUFNR
 CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
@@ -37,7 +10,7 @@ SELECT MAX( udate ) AS max_date,
        MAX( utime ) AS max_time
   INTO ( @lv_date, @lv_time )
   FROM cdhdr
- WHERE objectclas = 'ORDER'
+ WHERE objectclas = @lv_objclass
    AND objectid    = @lv_objid.
 
 "---------------------------------------------------
@@ -50,3 +23,23 @@ IF lv_cmxs_active = abap_true.
     RETURN.
   ENDIF.
 ENDIF.
+
+"---------------------------------------------------
+" Step 5.2: Apply selection-screen 'Check from Date/Time' filter
+"---------------------------------------------------
+IF lv_date < so_date-low OR
+   ( lv_date = so_date-low AND lv_time < so_time-low ).
+  RETURN. " Skip orders changed before selection timeframe
+ENDIF.
+
+"---------------------------------------------------
+" Debug log (verify timestamps and object ID mapping)
+"---------------------------------------------------
+WRITE: / 'Debug Info for Order:', ps_order-aufnr,
+       / 'Objnr              :', ps_order-objnr,
+       / 'Built Object ID    :', lv_objid,
+       / 'MANDT+30+Objnr     :', sy-mandt && '30' && ps_order-objnr,
+       / 'CMXS Active?       :', lv_cmxs_active,
+       / 'CMXS Date/Time     :', lv_cmxs_date, lv_cmxs_time,
+       / 'Last Change Date   :', lv_date, lv_time,
+       / '----------------------------------------'.
