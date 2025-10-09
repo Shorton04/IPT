@@ -72,7 +72,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 4: Detect CMXS (Sent to CMX) — Latest Active Record Only
+  " Step 4: Detect CMXS (Sent to CMX)
   "---------------------------------------------------
   DATA: BEGIN OF ls_jcds,
           udate TYPE jcds-udate,
@@ -105,22 +105,18 @@ FORM f_check_status USING ps_order TYPE viaufkst.
    WHERE objectclas = 'ORDER' AND objectid = @lv_objid.
 
   "---------------------------------------------------
-  " Step 5.1: Determine if newer changes exist since CMXS
+  " Step 5.2: Determine if order has newer change since CMXS
   "---------------------------------------------------
   IF lv_cmxs_active = abap_true.
-    IF lv_date > lv_cmxs_date OR
-       ( lv_date = lv_cmxs_date AND lv_time > lv_cmxs_time ).
+    IF lv_date IS NOT INITIAL AND
+       ( lv_date > lv_cmxs_date OR
+         ( lv_date = lv_cmxs_date AND lv_time > lv_cmxs_time ) ).
       lv_has_new_change = abap_true.
     ELSE.
-      " Fallback: check classification/object-level CDHDR
-      READ TABLE gt_cdhdr INTO gs_cdhdr
-           WITH KEY objectid = lv_objid BINARY SEARCH.
-      IF sy-subrc = 0 AND
-         ( gs_cdhdr-udate > lv_cmxs_date OR
-           ( gs_cdhdr-udate = lv_cmxs_date AND gs_cdhdr-utime > lv_cmxs_time ) ).
-        lv_has_new_change = abap_true.
-      ENDIF.
+      lv_has_new_change = abap_false.
     ENDIF.
+  ELSE.
+    lv_has_new_change = abap_true.
   ENDIF.
 
   "---------------------------------------------------
@@ -137,9 +133,9 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 7: Handle lock/unlock transitions
+  " Step 7: Handle lock/unlock logic and skip rules
   "---------------------------------------------------
-  " Case 4a: Locked before CMXS – skip
+  " Case 1: Locked before any CMXS → skip sending
   IF lv_locked_active = abap_true AND lv_cmxs_active = abap_false.
     gs_output-OrderMessageStatus = 'CREATE'.
     gs_output-Plant              = ps_order-iwerk.
@@ -151,29 +147,37 @@ FORM f_check_status USING ps_order TYPE viaufkst.
     RETURN.
   ENDIF.
 
-  " Case 4b: Unlocked after CMXS – always send
-  IF lv_locked_active = abap_false AND lv_cmxs_active = abap_true.
-    gs_output-Msg = 'Order unlocked after CMXS – send as REL'.
-    PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
-    PERFORM f_prepare_output USING ps_order lv_vornr 'I0002'. "REL
-    RETURN.
-  ENDIF.
-
-  "---------------------------------------------------
-  " Step 8: Control ALV visibility for unchanged REL+CMXS
-  "---------------------------------------------------
+  " Case 2: REL + CMXS + unchanged → skip ALV
   IF lv_teco_active = abap_false
      AND lv_locked_active = abap_false
      AND lv_cmxs_active = abap_true
      AND lv_has_new_change = abap_false.
-    RETURN. " Skip unchanged REL orders already sent to CMX
+    RETURN.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 9: Prepare output for valid/changed cases
+  " Step 8: Prepare message for CMX resend scenarios
+  "---------------------------------------------------
+  IF lv_cmxs_active = abap_true AND lv_has_new_change = abap_true.
+    gs_output-Msg = 'Order changed after CMXS – resend'.
+  ENDIF.
+
+  IF lv_locked_active = abap_true AND lv_cmxs_active = abap_true.
+    gs_output-Msg = 'Order locked after CMXS – send to CMX'.
+  ENDIF.
+
+  IF lv_locked_active = abap_false AND lv_cmxs_active = abap_true AND lv_has_new_change = abap_true.
+    gs_output-Msg = 'Order unlocked or modified after CMXS – send to CMX'.
+  ENDIF.
+
+  "---------------------------------------------------
+  " Step 9: Get first valid operation
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
+  "---------------------------------------------------
+  " Step 10: Prepare output
+  "---------------------------------------------------
   IF lv_locked_active = abap_true.
     lv_stat = 'I0043'. " Locked
   ELSEIF lv_teco_active = abap_true.
