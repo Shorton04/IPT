@@ -25,9 +25,11 @@ FORM f_send_cmx.
       CONTINUE.
     ENDIF.
 
-    " Test mode: only simulate, do not update SAP
+    " Test mode: simulate only
     IF lv_mode = 'TEST'.
-      <ls_output_row>-msg = |[Test Mode] Would set CMXS for order { <ls_output_row>-MaintenanceOrder }|.
+      CONCATENATE '[Test Mode] Would set CMXS for order'
+                  <ls_output_row>-MaintenanceOrder
+             INTO <ls_output_row>-msg SEPARATED BY space.
       PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
                                  <ls_output_row>-MaintenanceOrderOperation
                                  <ls_output_row>-Plant
@@ -37,17 +39,20 @@ FORM f_send_cmx.
     ENDIF.
 
     "---------------------------------------------------
-    " Live update: always refresh CMXS (even on resend)
+    " Live update (always refresh CMXS after send)
     "---------------------------------------------------
     DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
           lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
           lt_methods TYPE TABLE OF bapi_alm_order_method,
           lt_return  TYPE TABLE OF bapiret2,
-          ls_return  TYPE bapiret2.
+          ls_return  TYPE bapiret2,
+          lv_objnr   TYPE aufk-objnr,
+          lv_new_date TYPE jcds-udate,
+          lv_new_time TYPE jcds-utime.
 
-    CLEAR: lt_header, lt_status, lt_methods, lt_return.
+    CLEAR: lt_header, lt_status, lt_methods, lt_return,
+           ls_return, lv_objnr, lv_new_date, lv_new_time.
 
-    " Header + methods for BAPI
     APPEND VALUE #( orderid = <ls_output_row>-MaintenanceOrder ) TO lt_header.
     APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu ) TO lt_status.
 
@@ -77,17 +82,30 @@ FORM f_send_cmx.
       "---------------------------------------------------
       " Refresh CMXS timestamp after successful update
       "---------------------------------------------------
-      SELECT MAX( udate ) AS max_date, MAX( utime ) AS max_time
-        INTO @DATA(lv_new_date), @DATA(lv_new_time)
-        FROM jcds
-       WHERE objnr = ( SELECT objnr FROM aufk WHERE aufnr = @<ls_output_row>-MaintenanceOrder )
-         AND stat  = 'E0014'
-         AND inact = ''.
+      CLEAR lv_objnr.
+
+      SELECT SINGLE objnr
+        INTO lv_objnr
+        FROM aufk
+       WHERE aufnr = <ls_output_row>-MaintenanceOrder.
 
       IF sy-subrc = 0.
-        <ls_output_row>-msg = |CMXS refreshed on { lv_new_date } { lv_new_time }|.
+        SELECT MAX( udate ) AS max_date
+               MAX( utime ) AS max_time
+          INTO (lv_new_date, lv_new_time)
+          FROM jcds
+         WHERE objnr = lv_objnr
+           AND stat  = 'E0014'
+           AND inact = ''.
+
+        IF sy-subrc = 0.
+          CONCATENATE 'CMXS refreshed on' lv_new_date lv_new_time
+            INTO <ls_output_row>-msg SEPARATED BY space.
+        ELSE.
+          <ls_output_row>-msg = 'CMXS status updated successfully'.
+        ENDIF.
       ELSE.
-        <ls_output_row>-msg = 'CMXS status updated successfully'.
+        <ls_output_row>-msg = 'CMXS update done (Objnr not found)'.
       ENDIF.
     ENDIF.
 
