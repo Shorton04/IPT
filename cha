@@ -1,8 +1,11 @@
 "---------------------------------------------------
-" Step 4: Detect CMXS (Sent to CMX) – Latest Active Record Only
+" Step 4: Detect CMXS (Sent to CMX)
 "---------------------------------------------------
-DATA: lt_jcds TYPE TABLE OF jcds,
-      ls_jcds TYPE jcds.
+DATA: BEGIN OF ls_jcds,
+        udate TYPE jcds-udate,
+        utime TYPE jcds-utime,
+      END OF ls_jcds,
+      lt_jcds LIKE TABLE OF ls_jcds.
 
 CLEAR: lv_cmxs_active, lv_cmxs_date, lv_cmxs_time.
 
@@ -15,7 +18,7 @@ SELECT udate, utime
 
 IF sy-subrc = 0.
   SORT lt_jcds BY udate DESCENDING utime DESCENDING.
-  READ TABLE lt_jcds INTO ls_jcds INDEX 1.
+  READ TABLE lt_jcds INDEX 1 INTO ls_jcds.
   IF sy-subrc = 0.
     lv_cmxs_active = abap_true.
     lv_cmxs_date = ls_jcds-udate.
@@ -26,7 +29,6 @@ ENDIF.
 "---------------------------------------------------
 " Step 5: Get latest ORDER change timestamp (CDHDR)
 "---------------------------------------------------
-DATA(lv_objid) = ''.
 
 " Build correct Object ID: MANDT + '30' + AUFNR
 CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
