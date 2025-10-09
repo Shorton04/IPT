@@ -1,18 +1,14 @@
 "---------------------------------------------------
 " Step 8: Improved timestamp & unlock logic (final)
 "---------------------------------------------------
-IF lv_cmxs_active = abap_true.
-
-  " If unlocked after CMXS → allow
-  IF lv_locked_active = abap_false AND lv_date >= lv_cmxs_date.
-    " changed or unlocked → continue
-  ELSEIF lv_locked_active = abap_false AND lv_date < lv_cmxs_date.
-    RETURN. " unchanged, already sent → skip
-  ELSEIF lv_locked_active = abap_true AND
-        ( lv_date IS INITIAL OR
-          lv_date < lv_cmxs_date OR
-          ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
-    RETURN. " locked but no new change → skip
+  IF lv_cmxs_active = abap_true.
+    " Only proceed if there is a real change (later timestamp)
+    IF lv_date IS NOT INITIAL AND
+       ( lv_date < lv_cmxs_date OR
+         ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ) ).
+      " No newer change → skip unless unlocked after CMXS
+      IF lv_locked_active = abap_false.
+        RETURN. " Unchanged and already sent → skip
+      ENDIF.
+    ENDIF.
   ENDIF.
-
-ENDIF.
