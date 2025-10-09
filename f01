@@ -1,9 +1,12 @@
 *---------------------------------------------------------------------*
-* Update SAP status and refresh CMXS timestamp after send
+* Update SAP CMXS after successful CPI send and refresh timestamp
 *---------------------------------------------------------------------*
 FORM f_send_cmx.
 
-  DATA lv_mode TYPE char10.
+  DATA: lv_mode TYPE char10,
+        lv_objnr TYPE aufk-objnr,
+        lv_new_date TYPE jcds-udate,
+        lv_new_time TYPE jcds-utime.
 
   IF p_test = abap_true.
     lv_mode = 'TEST'.
@@ -13,49 +16,56 @@ FORM f_send_cmx.
 
   LOOP AT gt_output ASSIGNING FIELD-SYMBOL(<ls_output_row>).
 
-    " Skip Locked or TECO
-    IF <ls_output_row>-SystemStatusText = 'LKD'
-      OR <ls_output_row>-SystemStatusText = 'TECO'.
-      <ls_output_row>-msg = |Skipped: { <ls_output_row>-SystemStatusText } order|.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
-                                 'CMXS'
-                                 <ls_output_row>-msg.
-      CONTINUE.
-    ENDIF.
-
-    " Test mode: simulate only
-    IF lv_mode = 'TEST'.
-      CONCATENATE '[Test Mode] Would set CMXS for order'
-                  <ls_output_row>-MaintenanceOrder
-             INTO <ls_output_row>-msg SEPARATED BY space.
-      PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
-                                 <ls_output_row>-MaintenanceOrderOperation
-                                 <ls_output_row>-Plant
-                                 'CMXS'
-                                 <ls_output_row>-msg.
+    " Skip if not successfully sent to CPI or test mode
+    IF <ls_output_row>-msg CS 'CPI success' OR
+       ( lv_mode = 'TEST' AND <ls_output_row>-SystemStatusText <> 'LKD' ).
+      " OK to proceed
+    ELSE.
       CONTINUE.
     ENDIF.
 
     "---------------------------------------------------
-    " Live update (always refresh CMXS after send)
+    " Step 1: Skip if LKD before CMXS (never sent)
+    "---------------------------------------------------
+    IF <ls_output_row>-SystemStatusText = 'LKD'
+       AND <ls_output_row>-msg CS 'skip'.
+      CONTINUE.
+    ENDIF.
+
+    "---------------------------------------------------
+    " Step 2: Force CMXS refresh (deactivate + reactivate)
     "---------------------------------------------------
     DATA: lt_header  TYPE TABLE OF bapi_alm_order_headers_i,
           lt_status  TYPE TABLE OF bapi_alm_order_usrstat,
           lt_methods TYPE TABLE OF bapi_alm_order_method,
           lt_return  TYPE TABLE OF bapiret2,
-          ls_return  TYPE bapiret2,
-          lv_objnr   TYPE aufk-objnr,
-          lv_new_date TYPE jcds-udate,
-          lv_new_time TYPE jcds-utime.
+          ls_return  TYPE bapiret2.
 
-    CLEAR: lt_header, lt_status, lt_methods, lt_return,
-           ls_return, lv_objnr, lv_new_date, lv_new_time.
+    CLEAR: lt_header, lt_status, lt_methods, lt_return, ls_return,
+           lv_objnr, lv_new_date, lv_new_time.
 
     APPEND VALUE #( orderid = <ls_output_row>-MaintenanceOrder ) TO lt_header.
-    APPEND VALUE #( user_st_text = 'CMXS' langu = sy-langu ) TO lt_status.
 
+    " Step 2a: Deactivate CMXS (create inactive JCDS)
+    APPEND VALUE #( user_st_text = 'CMXS' inact = 'X' langu = sy-langu ) TO lt_status.
+    APPEND VALUE #( refnumber = '00001' objecttype = 'HEADER' method = 'CHANGE'
+                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+    APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS' method = 'CHANGE'
+                    objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
+
+    CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+      TABLES
+        it_header     = lt_header
+        it_userstatus = lt_status
+        it_methods    = lt_methods
+        return        = lt_return.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+
+    " Step 2b: Reactivate CMXS (write new JCDS timestamp)
+    CLEAR: lt_status, lt_methods, lt_return, ls_return.
+
+    APPEND VALUE #( user_st_text = 'CMXS' inact = '' langu = sy-langu ) TO lt_status.
     APPEND VALUE #( refnumber = '00001' objecttype = 'HEADER' method = 'CHANGE'
                     objectkey = <ls_output_row>-MaintenanceOrder ) TO lt_methods.
     APPEND VALUE #( refnumber = '00001' objecttype = 'USERSTATUS' method = 'CHANGE'
@@ -66,47 +76,44 @@ FORM f_send_cmx.
     CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
       TABLES
         it_header     = lt_header
-        it_methods    = lt_methods
         it_userstatus = lt_status
+        it_methods    = lt_methods
         return        = lt_return.
 
     READ TABLE lt_return INTO ls_return WITH KEY type = 'E'.
     IF sy-subrc = 0.
       <ls_output_row>-msg = ls_return-message(72).
       CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+      CONTINUE.
     ELSE.
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING
-          wait = 'X'.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+    ENDIF.
 
-      "---------------------------------------------------
-      " Refresh CMXS timestamp after successful update
-      "---------------------------------------------------
-      CLEAR lv_objnr.
+    "---------------------------------------------------
+    " Step 3: Verify new CMXS timestamp
+    "---------------------------------------------------
+    SELECT SINGLE objnr
+      INTO lv_objnr
+      FROM aufk
+     WHERE aufnr = <ls_output_row>-MaintenanceOrder.
 
-      SELECT SINGLE objnr
-        INTO lv_objnr
-        FROM aufk
-       WHERE aufnr = <ls_output_row>-MaintenanceOrder.
+    IF sy-subrc = 0.
+      SELECT MAX( udate ) AS max_date
+             MAX( utime ) AS max_time
+        INTO (lv_new_date, lv_new_time)
+        FROM jcds
+       WHERE objnr = lv_objnr
+         AND stat  = 'E0014'
+         AND inact = ''.
 
       IF sy-subrc = 0.
-        SELECT MAX( udate ) AS max_date
-               MAX( utime ) AS max_time
-          INTO (lv_new_date, lv_new_time)
-          FROM jcds
-         WHERE objnr = lv_objnr
-           AND stat  = 'E0014'
-           AND inact = ''.
-
-        IF sy-subrc = 0.
-          CONCATENATE 'CMXS refreshed on' lv_new_date lv_new_time
-            INTO <ls_output_row>-msg SEPARATED BY space.
-        ELSE.
-          <ls_output_row>-msg = 'CMXS status updated successfully'.
-        ENDIF.
+        CONCATENATE 'CMXS refreshed on' lv_new_date lv_new_time
+          INTO <ls_output_row>-msg SEPARATED BY space.
       ELSE.
-        <ls_output_row>-msg = 'CMXS update done (Objnr not found)'.
+        <ls_output_row>-msg = 'CMXS updated, no new timestamp found'.
       ENDIF.
+    ELSE.
+      <ls_output_row>-msg = 'CMXS update done (Objnr not found)'.
     ENDIF.
 
     PERFORM f_write_log USING <ls_output_row>-MaintenanceOrder
