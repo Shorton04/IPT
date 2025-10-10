@@ -1,45 +1,54 @@
-"---------------------------------------------------
-" Step 5: Get latest ORDER change timestamp (CDHDR)
-"---------------------------------------------------
-DATA(lv_objclass) = 'ORDER'.
+FUNCTION zlonza_alv_popup_table.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     REFERENCE(IV_START_COL) TYPE  I DEFAULT 25
+*"     REFERENCE(IV_START_LINE) TYPE  I DEFAULT 6
+*"     REFERENCE(IV_END_COL) TYPE  I DEFAULT 100
+*"     REFERENCE(IV_END_LINE) TYPE  I DEFAULT 10
+*"     REFERENCE(IV_TITLE) TYPE  STRING DEFAULT 'ALV'
+*"     REFERENCE(IT_TABLE) TYPE  STANDARD TABLE OPTIONAL
+*"     REFERENCE(IT_FIELD_NAMES) TYPE  STANDARD TABLE OPTIONAL
+*"  EXPORTING
+*"     REFERENCE(EV_CHOICE) TYPE  FLAG
+*"----------------------------------------------------------------------
 
-" Build correct Object ID: MANDT + '30' + AUFNR
-CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
+  DATA:lo_popup  TYPE REF TO cl_reca_gui_f4_popup,
+       lt_names  TYPE STANDARD TABLE OF zzs_alv_popup_names,
+       ls_names  TYPE zzs_alv_popup_names,
+       lv_choice TYPE flag.
 
-SELECT MAX( udate ) AS max_date,
-       MAX( utime ) AS max_time
-  INTO ( @lv_date, @lv_time )
-  FROM cdhdr
- WHERE objectclas = @lv_objclass
-   AND objectid    = @lv_objid.
+  CHECK it_table IS INITIAL.
 
-"---------------------------------------------------
-" Step 5.1: Skip if no newer change since CMXS
-"---------------------------------------------------
-IF lv_cmxs_active = abap_true.
-  IF lv_date IS INITIAL
-     OR lv_date < lv_cmxs_date
-     OR ( lv_date = lv_cmxs_date AND lv_time <= lv_cmxs_time ).
-    RETURN.
-  ENDIF.
-ENDIF.
+  CALL METHOD cl_reca_gui_f4_popup=>factory_grid
+    EXPORTING
+      it_f4value     = it_table[]
+      if_multi       = abap_false
+      id_title       = iv_title
+    RECEIVING
+      ro_f4_instance = lo_popup.
 
-"---------------------------------------------------
-" Step 5.2: Apply selection-screen 'Check from Date/Time' filter
-"---------------------------------------------------
-IF lv_date < so_date-low OR
-   ( lv_date = so_date-low AND lv_time < so_time-low ).
-  RETURN. " Skip orders changed before selection timeframe
-ENDIF.
+  CHECK lo_popup IS BOUND.
 
-"---------------------------------------------------
-" Debug log (verify timestamps and object ID mapping)
-"---------------------------------------------------
-WRITE: / 'Debug Info for Order:', ps_order-aufnr,
-       / 'Objnr              :', ps_order-objnr,
-       / 'Built Object ID    :', lv_objid,
-       / 'MANDT+30+Objnr     :', sy-mandt && '30' && ps_order-objnr,
-       / 'CMXS Active?       :', lv_cmxs_active,
-       / 'CMXS Date/Time     :', lv_cmxs_date, lv_cmxs_time,
-       / 'Last Change Date   :', lv_date, lv_time,
-       / '----------------------------------------'.
+  MOVE-CORRESPONDING it_field_names[] TO lt_names.
+
+  LOOP AT lt_names INTO ls_names.
+    CALL METHOD lo_popup->set_field_text
+      EXPORTING
+        id_fieldname = ls_names-fieldname
+        id_text      = ls_names-heading.
+  ENDLOOP.
+
+  CALL METHOD lo_popup->display
+    EXPORTING
+      id_start_column = iv_start_col
+      id_start_line   = iv_start_line
+      id_end_column   = iv_end_col
+      id_end_line     = iv_end_line
+    IMPORTING
+      et_result       = it_table[]
+      ef_cancelled    = lv_choice.
+
+  ev_choice = lv_choice.
+
+ENDFUNCTION.
