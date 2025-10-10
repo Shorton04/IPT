@@ -1,5 +1,5 @@
 *---------------------------------------------------------------------*
-* Check status - Final version (CDHDR for data, JCDS for status)
+* Check status - FINAL version (CDHDR + JCDS + Unlock + LKD in ALV)
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
@@ -17,10 +17,12 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_chg_date      TYPE udate,
         lv_chg_time      TYPE utime,
         lv_sts_date      TYPE udate,
-        lv_sts_time      TYPE utime.
+        lv_sts_time      TYPE utime,
+        lv_recent_date   TYPE udate,
+        lv_recent_time   TYPE utime.
 
   "---------------------------------------------------
-  " Classification object
+  " Classification object (equipment or location)
   "---------------------------------------------------
   IF ps_order-equnr IS NOT INITIAL.
     SELECT SINGLE cuobj INTO lv_obj FROM inob WHERE objek = ps_order-equnr.
@@ -32,7 +34,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 1: Check REL / TECO
+  " Step 1: Check REL / TECO active
   "---------------------------------------------------
   SELECT SINGLE stat FROM jest INTO lv_stat
     WHERE objnr = ps_order-objnr AND stat = 'I0002' AND inact = ''.
@@ -43,11 +45,11 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   IF sy-subrc = 0. lv_teco_active = abap_true. ENDIF.
 
   IF lv_rel_active = abap_false AND lv_teco_active = abap_false.
-    RETURN. " Not eligible
+    RETURN. " Skip orders that are not REL or TECO
   ENDIF.
 
   "---------------------------------------------------
-  " Step 2: Check INTERFACE = CMX
+  " Step 2: Check INTERFACE characteristic = CMX
   "---------------------------------------------------
   SELECT SINGLE atwrt INTO lv_value
     FROM ausp
@@ -57,7 +59,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 3: Check Lock Status
+  " Step 3: Check lock status (I0043 active = locked)
   "---------------------------------------------------
   SELECT SINGLE inact FROM jest INTO lv_inact
     WHERE objnr = ps_order-objnr AND stat = 'I0043'.
@@ -66,31 +68,31 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 4: Get latest data change (CDHDR)
+  " Step 4: Latest data change (CDHDR)
   "---------------------------------------------------
   CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-  SELECT MAX( udate ) AS max_date
+  SELECT MAX( udate ) AS max_date,
          MAX( utime ) AS max_time
     INTO ( lv_chg_date, lv_chg_time )
     FROM cdhdr
-   WHERE objectclas = 'ORDER' AND objectid = lv_objid.
+   WHERE objectclas = 'ORDER'
+     AND objectid   = lv_objid.
 
   "---------------------------------------------------
-  " Step 5: Get latest status change (JCDS)
+  " Step 5: Latest status change (JCDS - including unlocks)
   "---------------------------------------------------
-  SELECT MAX( udate ) AS max_date
+  SELECT MAX( udate ) AS max_date,
          MAX( utime ) AS max_time
     INTO ( lv_sts_date, lv_sts_time )
     FROM jcds
    WHERE objnr = ps_order-objnr
-     AND inact = ''
-     AND stat IN ( 'I0043', 'I0045', 'I0002' ).  " LKD, TECO, REL
+     AND stat IN ( 'I0043', 'I0045', 'I0002' ). " LKD, TECO, REL (active or inactive)
 
   "---------------------------------------------------
-  " Step 6: Determine most recent activity
+  " Step 6: Determine latest activity (data or status)
   "---------------------------------------------------
-  DATA(lv_recent_date) = lv_chg_date.
-  DATA(lv_recent_time) = lv_chg_time.
+  lv_recent_date = lv_chg_date.
+  lv_recent_time = lv_chg_time.
 
   IF lv_sts_date > lv_recent_date OR
      ( lv_sts_date = lv_recent_date AND lv_sts_time > lv_recent_time ).
@@ -99,32 +101,42 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 7: Compare vs selection date/time
+  " Step 7: Compare vs input date/time (so_date & so_time)
   "---------------------------------------------------
   IF ( lv_recent_date < so_date-low ) OR
      ( lv_recent_date = so_date-low AND lv_recent_time < so_time-low ).
-    RETURN. " no change since last check
+    RETURN. " No change since last check
   ENDIF.
 
   "---------------------------------------------------
-  " Step 8: Decide what to display/send
+  " Step 8: Determine next action
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
+  "---------------------------------------------------
+  " Locked orders → show in ALV, do not send
+  "---------------------------------------------------
   IF lv_locked_active = abap_true.
     lv_stat = 'I0043'. " Locked
     PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
     gs_output-Msg = 'Locked – not sent to CMX'.
-    MODIFY gt_output FROM gs_output INDEX sy-tabix.
+    APPEND gs_output TO gt_output.
     RETURN.
   ENDIF.
 
+  "---------------------------------------------------
+  " TECO → show and send
+  "---------------------------------------------------
   IF lv_teco_active = abap_true.
     lv_stat = 'I0045'. " TECO
-  ELSE.
-    lv_stat = 'I0002'. " REL / unlocked
+    PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+    RETURN.
   ENDIF.
 
+  "---------------------------------------------------
+  " REL (including unlocked or changed) → show and send
+  "---------------------------------------------------
+  lv_stat = 'I0002'. " REL
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
