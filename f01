@@ -1,5 +1,5 @@
 *---------------------------------------------------------------------*
-* Check status - FINAL version (CDHDR + JCDS + Unlock + LKD in ALV)
+* Check status - FINAL (CDHDR + JCDS + Unlock + LKD in ALV + No Duplicates)
 *---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
@@ -109,12 +109,18 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 8: Determine next action
+  " Step 8: Determine next action (deduped ALV)
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
+  " Avoid duplicate ALV entries (same MaintenanceOrder)
+  READ TABLE gt_output WITH KEY MaintenanceOrder = ps_order-aufnr TRANSPORTING NO FIELDS.
+  IF sy-subrc = 0.
+    RETURN. " Already added, skip duplicate
+  ENDIF.
+
   "---------------------------------------------------
-  " Locked orders → show in ALV, do not send
+  " Locked orders → show only, do not send
   "---------------------------------------------------
   IF lv_locked_active = abap_true.
     lv_stat = 'I0043'. " Locked
@@ -134,7 +140,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " REL (including unlocked or changed) → show and send
+  " REL / UNLOCKED / CHANGED → show and send
   "---------------------------------------------------
   lv_stat = 'I0002'. " REL
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
