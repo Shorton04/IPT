@@ -1,12 +1,31 @@
   "---------------------------------------------------
-  " Step 5: Filter strictly by input range (date + time)
+  " Step 5: Check changes in JCDS and CDHDR vs. input date/time
   "---------------------------------------------------
-  DATA(lv_recent_ts) TYPE char14.
-  DATA(lv_input_ts)  TYPE char14.
+  DATA: lv_jcds_ts   TYPE c LENGTH 14,
+        lv_cdhdr_ts  TYPE c LENGTH 14,
+        lv_input_ts  TYPE c LENGTH 14.
 
-  CONCATENATE lv_recent_date lv_recent_time INTO lv_recent_ts.
-  CONCATENATE so_date-low   so_time-low   INTO lv_input_ts.
+  CONCATENATE so_date-low so_time-low INTO lv_input_ts.
 
-  IF lv_recent_ts < lv_input_ts.
-    RETURN.
+  " Combine JCDS date/time into one timestamp
+  CONCATENATE lv_sts_date lv_sts_time INTO lv_jcds_ts.
+
+  " Combine CDHDR date/time into one timestamp
+  CONCATENATE lv_chg_date lv_chg_time INTO lv_cdhdr_ts.
+
+  "---------------------------------------------------
+  " Case 1: If JCDS change is after user input → SHOW
+  "---------------------------------------------------
+  IF lv_jcds_ts > lv_input_ts.
+    " Keep processing, do not return
+  ELSE.
+    "---------------------------------------------------
+    " Case 2: If JCDS is older, check CDHDR
+    "---------------------------------------------------
+    IF lv_cdhdr_ts > lv_input_ts.
+      " Keep processing, do not return
+    ELSE.
+      " Both are older than range → skip from ALV
+      RETURN.
+    ENDIF.
   ENDIF.
