@@ -1,37 +1,11 @@
   "---------------------------------------------------
-  " Step 4: Get latest change timestamps (accurate)
-  "---------------------------------------------------
-  CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-
-  " Latest change in CDHDR
-  SELECT MAX( udate ) AS udate, MAX( utime ) AS utime
-    INTO ( @lv_chg_date, @lv_chg_time )
-    FROM cdhdr
-   WHERE objectclas = 'ORDER'
-     AND objectid   = @lv_objid.
-
-  " Latest status change in JCDS for LKD, TECO, REL
-  SELECT MAX( udate ) AS udate, MAX( utime ) AS utime
-    INTO ( @lv_sts_date, @lv_sts_time )
-    FROM jcds
-   WHERE objnr = @ps_order-objnr
-     AND stat IN ( 'I0043', 'I0045', 'I0002' ).
-
-  " Use whichever happened later
-  IF lv_sts_date > lv_chg_date OR
-     ( lv_sts_date = lv_chg_date AND lv_sts_time > lv_chg_time ).
-    lv_recent_date = lv_sts_date.
-    lv_recent_time = lv_sts_time.
-  ELSE.
-    lv_recent_date = lv_chg_date.
-    lv_recent_time = lv_chg_time.
-  ENDIF.
-
-  "---------------------------------------------------
   " Step 5: Filter strictly by input range (date + time)
   "---------------------------------------------------
-  DATA(lv_recent_ts) = lv_recent_date * 1000000 + lv_recent_time.
-  DATA(lv_input_ts)  = so_date-low   * 1000000 + so_time-low.
+  DATA(lv_recent_ts) TYPE char14.
+  DATA(lv_input_ts)  TYPE char14.
+
+  CONCATENATE lv_recent_date lv_recent_time INTO lv_recent_ts.
+  CONCATENATE so_date-low   so_time-low   INTO lv_input_ts.
 
   IF lv_recent_ts < lv_input_ts.
     RETURN.
