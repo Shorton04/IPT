@@ -1,70 +1,76 @@
-FUNCTION zlonza_alv_popup_table.
-*"----------------------------------------------------------------------
-*"*" Local Interface:
-*"  IMPORTING
-*"     REFERENCE(iv_start_col)    TYPE i DEFAULT 25
-*"     REFERENCE(iv_start_line)   TYPE i DEFAULT 6
-*"     REFERENCE(iv_end_col)      TYPE i DEFAULT 100
-*"     REFERENCE(iv_end_line)     TYPE i DEFAULT 10
-*"     REFERENCE(iv_title)        TYPE string DEFAULT 'ALV'
-*"     REFERENCE(it_field_names)  TYPE any table OPTIONAL
-*"  CHANGING
-*"     REFERENCE(it_table)        TYPE any table OPTIONAL
-*"  EXPORTING
-*"     REFERENCE(ev_choice)       TYPE flag
-*"----------------------------------------------------------------------
+*---------------------------------------------------------------------*
+* Prepare output (no duplicates)
+*---------------------------------------------------------------------*
+FORM f_prepare_output USING ps_order TYPE viaufkst
+                            pv_vornr TYPE vornr
+                            pv_stat  TYPE jest-stat.
 
-  DATA: lo_popup   TYPE REF TO cl_reca_gui_f4_popup,
-        lt_names   TYPE STANDARD TABLE OF zzs_alv_popup_names,
-        ls_names   TYPE zzs_alv_popup_names,
-        lv_choice  TYPE flag,
-        lt_result  TYPE REF TO data.  " temp result holder
+  DATA: lv_index TYPE sy-tabix.
 
-  FIELD-SYMBOLS: <lt_result> TYPE STANDARD TABLE.
+  CLEAR gs_output.
 
-  " Safety check: table must not be initial
-  IF it_table IS INITIAL.
-    RETURN.
+  gs_output-OrderMessageStatus        = 'CREATE'.
+  gs_output-Plant                     = ps_order-iwerk.
+  gs_output-MaintenanceOrder          = ps_order-aufnr.
+  gs_output-MaintenanceOrderOperation = pv_vornr.
+  gs_output-MaintOrdBasicStartDate    = ps_order-gstrp.
+  gs_output-MaintOrdBasicEndDate      = ps_order-gltrp.
+  gs_output-LatestAcceptableComplDate = ps_order-lacd_date.
+  gs_output-SystemId                  = sy-sysid.
+
+  "---------------------------------------------------
+  " Determine system status text
+  "---------------------------------------------------
+  DATA(lv_teco_active) = abap_false.
+  DATA(lv_cmx_active)  = abap_false.
+
+  SELECT SINGLE stat INTO @DATA(lv_teco_stat)
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'I0045'
+     AND inact = ''.
+  IF sy-subrc = 0.
+    lv_teco_active = abap_true.
   ENDIF.
 
-  " Create popup
-  CALL METHOD cl_reca_gui_f4_popup=>factory_grid
-    EXPORTING
-      it_f4value     = it_table
-      if_multi       = abap_false
-      id_title       = iv_title
-    RECEIVING
-      ro_f4_instance = lo_popup.
+  SELECT SINGLE stat INTO @DATA(lv_cmx_stat)
+    FROM jest
+   WHERE objnr = @ps_order-objnr
+     AND stat  = 'E0010'
+     AND inact = ''.
+  IF sy-subrc = 0.
+    lv_cmx_active = abap_true.
+  ENDIF.
 
-  CHECK lo_popup IS BOUND.
+  IF lv_teco_active = abap_true.
+    SELECT SINGLE txt04
+      INTO gs_output-SystemStatusText
+      FROM tj02t
+     WHERE istat = 'I0045'
+       AND spras = 'E'.
+  ELSE.
+    SELECT SINGLE txt04
+      INTO gs_output-SystemStatusText
+      FROM tj02t
+     WHERE istat = pv_stat
+       AND spras = 'E'.
+  ENDIF.
 
-  " Map field names to popup fields
-  MOVE-CORRESPONDING it_field_names TO lt_names.
+  IF ps_order-equnr IS NOT INITIAL.
+    gs_output-TechnicalObject = ps_order-equnr.
+  ELSE.
+    gs_output-TechnicalObject = ps_order-tplnr.
+  ENDIF.
 
-  LOOP AT lt_names INTO ls_names.
-    CALL METHOD lo_popup->set_field_text
-      EXPORTING
-        id_fieldname = ls_names-fieldname
-        id_text      = ls_names-heading.
-  ENDLOOP.
+  "---------------------------------------------------
+  " Prevent duplicates — replace existing instead
+  "---------------------------------------------------
+  READ TABLE gt_output WITH KEY MaintenanceOrder = ps_order-aufnr TRANSPORTING NO FIELDS.
+  IF sy-subrc = 0.
+    lv_index = sy-tabix.
+    MODIFY gt_output FROM gs_output INDEX lv_index.
+  ELSE.
+    APPEND gs_output TO gt_output.
+  ENDIF.
 
-  " Prepare temporary result table
-  CREATE DATA lt_result LIKE it_table.
-  ASSIGN lt_result->* TO <lt_result>.
-
-  " Display popup
-  CALL METHOD lo_popup->display
-    EXPORTING
-      id_start_column = iv_start_col
-      id_start_line   = iv_start_line
-      id_end_column   = iv_end_col
-      id_end_line     = iv_end_line
-    IMPORTING
-      et_result       = <lt_result>
-      ef_cancelled    = lv_choice.
-
-  " Assign result back to changing table
-  it_table = <lt_result>.
-  ev_choice = lv_choice.
-
-ENDFUNCTION.
+ENDFORM.
