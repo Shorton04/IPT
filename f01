@@ -1,3 +1,6 @@
+*---------------------------------------------------------------------*
+* Check status - FINAL (Accurate datetime range + dedup + JCDS/CDHDR)
+*---------------------------------------------------------------------*
 FORM f_check_status USING ps_order TYPE viaufkst.
 
   DATA: lv_obj           TYPE cuobj,
@@ -16,18 +19,20 @@ FORM f_check_status USING ps_order TYPE viaufkst.
         lv_sts_date      TYPE udate,
         lv_sts_time      TYPE utime,
         lv_recent_date   TYPE udate,
-        lv_recent_time   TYPE utime.
+        lv_recent_time   TYPE utime,
+        lv_recent_ts     TYPE p LENGTH 14,
+        lv_from_ts       TYPE p LENGTH 14.
 
   "---------------------------------------------------
-  " Skip duplicate processing for same order
+  " Prevent duplicate ALV entries for same order
   "---------------------------------------------------
   READ TABLE gt_output WITH KEY MaintenanceOrder = ps_order-aufnr TRANSPORTING NO FIELDS.
   IF sy-subrc = 0.
-    RETURN.
+    RETURN. " Already processed
   ENDIF.
 
   "---------------------------------------------------
-  " Get classification object (equipment or location)
+  " Classification object (equipment or location)
   "---------------------------------------------------
   CLEAR lv_obj.
   IF ps_order-equnr IS NOT INITIAL.
@@ -52,7 +57,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   IF sy-subrc = 0. lv_teco_active = abap_true. ENDIF.
 
   IF lv_rel_active = abap_false AND lv_teco_active = abap_false.
-    RETURN. " Not eligible
+    RETURN. " Skip if not REL or TECO
   ENDIF.
 
   "---------------------------------------------------
@@ -66,7 +71,7 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 3: Lock status (I0043 active = locked)
+  " Step 3: Check lock status (I0043 active = locked)
   "---------------------------------------------------
   SELECT SINGLE inact FROM jest INTO lv_inact
     WHERE objnr = ps_order-objnr AND stat = 'I0043'.
@@ -75,10 +80,9 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 4: Get latest change timestamps
+  " Step 4: Latest data change (CDHDR)
   "---------------------------------------------------
   CONCATENATE sy-mandt '30' ps_order-aufnr INTO lv_objid.
-
   SELECT MAX( udate ) AS max_date,
          MAX( utime ) AS max_time
     INTO ( lv_chg_date, lv_chg_time )
@@ -86,6 +90,9 @@ FORM f_check_status USING ps_order TYPE viaufkst.
    WHERE objectclas = 'ORDER'
      AND objectid   = lv_objid.
 
+  "---------------------------------------------------
+  " Step 5: Latest status change (JCDS)
+  "---------------------------------------------------
   SELECT MAX( udate ) AS max_date,
          MAX( utime ) AS max_time
     INTO ( lv_sts_date, lv_sts_time )
@@ -93,7 +100,9 @@ FORM f_check_status USING ps_order TYPE viaufkst.
    WHERE objnr = ps_order-objnr
      AND stat IN ( 'I0043', 'I0045', 'I0002' ). " LKD, TECO, REL
 
-  " Keep whichever is later
+  "---------------------------------------------------
+  " Step 6: Determine most recent change (data vs status)
+  "---------------------------------------------------
   lv_recent_date = lv_chg_date.
   lv_recent_time = lv_chg_time.
 
@@ -104,40 +113,35 @@ FORM f_check_status USING ps_order TYPE viaufkst.
   ENDIF.
 
   "---------------------------------------------------
-  " Step 5: Skip if no change since last check
+  " Step 7: Accurate date-time filtering (timestamp compare)
   "---------------------------------------------------
-  IF ( lv_recent_date < so_date-low ) OR
-     ( lv_recent_date = so_date-low AND lv_recent_time < so_time-low ).
-    RETURN.
+  CONCATENATE lv_recent_date lv_recent_time INTO lv_recent_ts.
+  CONCATENATE so_date-low    so_time-low    INTO lv_from_ts.
+
+  IF lv_recent_ts < lv_from_ts.
+    RETURN. " Skip older than Check From range
   ENDIF.
 
   "---------------------------------------------------
-  " Step 6: Determine next action (avoid LKD duplicates)
+  " Step 8: Determine next action
   "---------------------------------------------------
   PERFORM f_get_operation USING ps_order CHANGING lv_vornr.
 
-  " If Locked (I0043)
   IF lv_locked_active = abap_true.
-    " Prevent multiple locked entries
-    READ TABLE gt_output WITH KEY MaintenanceOrder = ps_order-aufnr TRANSPORTING NO FIELDS.
-    IF sy-subrc <> 0.
-      lv_stat = 'I0043'.
-      PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-      gs_output-Msg = 'Locked – not sent to CMX'.
-      APPEND gs_output TO gt_output.
-    ENDIF.
+    lv_stat = 'I0043'.
+    PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
+    gs_output-Msg = 'Locked – not sent to CMX'.
+    APPEND gs_output TO gt_output.
     RETURN.
   ENDIF.
 
-  " If TECO
   IF lv_teco_active = abap_true.
     lv_stat = 'I0045'.
     PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
     RETURN.
   ENDIF.
 
-  " If REL
-  lv_stat = 'I0002'.
+  lv_stat = 'I0002'. " REL or unlocked
   PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
 
 ENDFORM.
