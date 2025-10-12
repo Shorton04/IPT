@@ -1,33 +1,14 @@
-  "---------------------------------------------------
-  " 1. Locked → skip both (BAPI and CMX)
-  "---------------------------------------------------
-  IF lv_locked_active = abap_true.
-    lv_stat = 'I0043'.
-    PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-    gs_output-msg = 'Locked – skip BAPI and CMX (lock released for IW32)'.
-    APPEND gs_output TO gt_output.
-
-    " Release SAP lock safely and log the unlock action
-    PERFORM f_release_order_locks USING ps_order.
-
-    RETURN.
-  ENDIF.
-
-
-
-
-
-
-
 *---------------------------------------------------------------------*
-* Release locks for an order (safe + logged)
+* Release locks for an order (safe + logged) – D30 compatible version
 *---------------------------------------------------------------------*
 FORM f_release_order_locks USING ps_order TYPE viaufkst.
 
-  DATA: lv_fm_used TYPE funcname VALUE '',
+  DATA: lv_fm_used TYPE funcname VALUE space,
         lt_fms     TYPE TABLE OF funcname,
         lv_fm      TYPE funcname,
-        lv_found   TYPE abap_bool VALUE abap_false.
+        lv_found   TYPE abap_bool VALUE abap_false,
+        lv_exists  TYPE funcname,
+        lv_msg     TYPE char100.
 
   " List of possible DEQUEUE function modules available in system
   lt_fms = VALUE #( ( 'DEQUEUE_EAUFK' )   " Maintenance Order
@@ -39,37 +20,38 @@ FORM f_release_order_locks USING ps_order TYPE viaufkst.
 
   LOOP AT lt_fms INTO lv_fm.
 
-    " Check if the function module exists in the system
-    SELECT SINGLE funcname FROM tfdir INTO @DATA(lv_exists)
-      WHERE funcname = @lv_fm.
+    " Check if the function module exists
+    SELECT SINGLE funcname INTO lv_exists
+      FROM tfdir
+      WHERE funcname = lv_fm.
 
     IF sy-subrc <> 0.
       CONTINUE.
     ENDIF.
 
-    " Attempt to execute it safely
+    " Try to execute it safely
     TRY.
         CASE lv_fm.
           WHEN 'DEQUEUE_EAUFK' OR 'DEQUEUE_EAFKO'.
-            CALL FUNCTION (lv_fm)
+            CALL FUNCTION lv_fm
               EXPORTING
                 aufnr = ps_order-aufnr.
 
           WHEN 'DEQUEUE_EAFVC'.
-            CALL FUNCTION (lv_fm)
+            CALL FUNCTION lv_fm
               EXPORTING
                 objnr = ps_order-objnr.
 
           WHEN 'DEQUEUE_EEQUI'.
             IF ps_order-equnr IS NOT INITIAL.
-              CALL FUNCTION (lv_fm)
+              CALL FUNCTION lv_fm
                 EXPORTING
                   equnr = ps_order-equnr.
             ENDIF.
 
           WHEN 'DEQUEUE_EIFLOT'.
             IF ps_order-tplnr IS NOT INITIAL.
-              CALL FUNCTION (lv_fm)
+              CALL FUNCTION lv_fm
                 EXPORTING
                   tplnr = ps_order-tplnr.
             ENDIF.
@@ -80,22 +62,26 @@ FORM f_release_order_locks USING ps_order TYPE viaufkst.
         EXIT.
 
       CATCH cx_root INTO DATA(lx_root).
-        CONTINUE. " Try next FM
+        " Continue to next FM if call fails
+        CONTINUE.
     ENDTRY.
 
   ENDLOOP.
 
-  " If no specific function found → fallback to DEQUEUE_ALL
+  " If no specific function module found, fallback to DEQUEUE_ALL
   IF lv_found = abap_false.
     CALL FUNCTION 'DEQUEUE_ALL'.
     lv_fm_used = 'DEQUEUE_ALL'.
   ENDIF.
 
-  " Log which function module was used for releasing the lock
+  " Prepare log message (avoid string templates for compatibility)
+  CONCATENATE 'Lock released using' lv_fm_used INTO lv_msg SEPARATED BY space.
+
+  " Write log entry
   PERFORM f_write_log USING ps_order-aufnr
-                            ''          " operation number not applicable
+                            ''          " no operation number
                             ps_order-iwerk
                             'DEQUEUE'
-                            |Lock released using { lv_fm_used }|.
+                            lv_msg.
 
 ENDFORM.
