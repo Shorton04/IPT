@@ -3,127 +3,166 @@ FUNCTION zbapi_cmx_calib_result.
 *"*"Local Interface:
 *"  IMPORTING
 *"     VALUE(IV_NOTIF_NO) TYPE QMNUM
-*"     VALUE(IV_ORDERID)  TYPE AUFNR
+*"     VALUE(IV_ORDERID) TYPE AUFNR
 *"     VALUE(IV_OPERATION) TYPE VORNR
-*"     VALUE(IV_CERT_NO)  TYPE CHAR40
+*"     VALUE(IV_CERT_NO) TYPE CHAR40
 *"     VALUE(IV_DATE_TIME) TYPE TZNTSTMPL
 *"     VALUE(IV_USERID) TYPE CHAR20 OPTIONAL
 *"     VALUE(IV_PASSED) TYPE CHAR1 OPTIONAL
 *"  EXPORTING
 *"     VALUE(EV_STATUS) TYPE CHAR20
-*"     VALUE(EV_MESSAGE) TYPE STRING
+*"     VALUE(EV_MESSAGE) TYPE CHAR255
 *"----------------------------------------------------------------------
 
-  DATA: lt_act    TYPE TABLE OF bapi2080_act_item,
-        ls_act    TYPE bapi2080_act_item,
-        lt_return TYPE TABLE OF bapiret2,
-        ls_return TYPE bapiret2,
-        lt_conf   TYPE TABLE OF bapi_alm_conf_create,
-        ls_conf   TYPE bapi_alm_conf_create,
-        lt_method TYPE TABLE OF bapi_alm_order_method,
-        ls_method TYPE bapi_alm_order_method.
+* Local type in case system doesn’t have PM BAPI structures
+  TYPES: BEGIN OF ty_act_item,
+           act_codegrp TYPE char10,
+           act_code    TYPE char10,
+           act_text    TYPE char50,
+         END OF ty_act_item.
+
+  TYPES: BEGIN OF ty_conf,
+           orderid       TYPE aufnr,
+           operation     TYPE vornr,
+           fin_conf      TYPE char1,
+           act_work      TYPE decfloat16,
+           act_work_uom  TYPE char3,
+           conf_text     TYPE char40,
+           conf_date     TYPE sy-datum,
+           conf_time     TYPE sy-uzeit,
+         END OF ty_conf.
+
+  TYPES: BEGIN OF ty_method,
+           refnumber   TYPE char10,
+           objecttype  TYPE char10,
+           method      TYPE char30,
+           objectkey   TYPE aufnr,
+         END OF ty_method.
+
+* Data declarations
+  DATA: lt_act     TYPE TABLE OF ty_act_item,
+        ls_act     TYPE ty_act_item,
+        lt_conf    TYPE TABLE OF ty_conf,
+        ls_conf    TYPE ty_conf,
+        lt_method  TYPE TABLE OF ty_method,
+        ls_method  TYPE ty_method,
+        lt_return  TYPE TABLE OF bapiret2,
+        ls_return  TYPE bapiret2.
 
   CLEAR: ev_status, ev_message.
 
-  TRY.
+*--------------------------------------------------------------------*
+* Step 1: Add Notification Activities
+*--------------------------------------------------------------------*
 
-      "---------------------- 1. Add Activities to Notification ------------------
-      CLEAR ls_act.
-      ls_act-act_codegrp = 'CMX-CONF'.
-      ls_act-act_code    = '0001'.
-      ls_act-act_text    = COND #( WHEN iv_passed = 'X'
-                                   THEN 'TRUE'
-                                   ELSE 'FALSE' ).
-      APPEND ls_act TO lt_act.
+  " Activity 0001 - Calibration Result
+  CLEAR ls_act.
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = '0001'.
+  IF iv_passed = 'X'.
+    ls_act-act_text = 'TRUE'.
+  ELSE.
+    ls_act-act_text = 'FALSE'.
+  ENDIF.
+  APPEND ls_act TO lt_act.
 
-      CLEAR ls_act.
-      ls_act-act_codegrp = 'CMX-CONF'.
-      ls_act-act_code    = 'A002'.
-      ls_act-act_text    = iv_cert_no.
-      APPEND ls_act TO lt_act.
+  " Activity A002 - Certificate Number
+  CLEAR ls_act.
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = 'A002'.
+  ls_act-act_text    = iv_cert_no.
+  APPEND ls_act TO lt_act.
 
-      CLEAR ls_act.
-      ls_act-act_codegrp = 'CMX-CONF'.
-      ls_act-act_code    = 'B002'.
-      ls_act-act_text    = iv_date_time.
-      APPEND ls_act TO lt_act.
+  " Activity B002 - Calibration Date
+  CLEAR ls_act.
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = 'B002'.
+  ls_act-act_text    = iv_date_time(14). " Convert timestamp to string
+  APPEND ls_act TO lt_act.
 
-      CALL FUNCTION 'BAPI_ALM_NOTIF_DATA_ADD'
-        EXPORTING
-          number   = iv_notif_no
-        TABLES
-          activity = lt_act
-          return   = lt_return.
+  CALL FUNCTION 'BAPI_ALM_NOTIF_DATA_ADD'
+    EXPORTING
+      number   = iv_notif_no
+    TABLES
+      activity = lt_act
+      return   = lt_return.
 
-      READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
-      IF sy-subrc = 0.
-        ev_status  = 'ERROR'.
-        ev_message = |Notif add failed: { ls_return-message }|.
-        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-        RETURN.
-      ENDIF.
+  READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
+  IF sy-subrc = 0.
+    ev_status  = 'ERROR'.
+    ev_message = |Notif add failed: { ls_return-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
 
-      CALL FUNCTION 'BAPI_ALM_NOTIF_SAVE'
-        EXPORTING
-          number = iv_notif_no
-        TABLES
-          return = lt_return.
+  CALL FUNCTION 'BAPI_ALM_NOTIF_SAVE'
+    EXPORTING
+      number = iv_notif_no
+    TABLES
+      return = lt_return.
 
-      "---------------------- 2. Create Time Confirmation ------------------
-      CLEAR ls_conf.
-      ls_conf-orderid       = iv_orderid.
-      ls_conf-operation     = iv_operation.
-      ls_conf-fin_conf      = 'X'.
-      ls_conf-act_work      = 1.
-      ls_conf-act_work_uom  = 'HR'.
-      ls_conf-conf_text     = 'Calibration confirmed via CMX'.
-      APPEND ls_conf TO lt_conf.
+*--------------------------------------------------------------------*
+* Step 2: Create Time Confirmation
+*--------------------------------------------------------------------*
 
-      CALL FUNCTION 'BAPI_ALM_CONF_CREATE'
-        EXPORTING
-          orderid = iv_orderid
-        TABLES
-          conf_tab = lt_conf
-          return   = lt_return.
+  CLEAR ls_conf.
+  ls_conf-orderid      = iv_orderid.
+  ls_conf-operation    = iv_operation.
+  ls_conf-fin_conf     = 'X'.
+  ls_conf-act_work     = '1'.
+  ls_conf-act_work_uom = 'HR'.
+  ls_conf-conf_text    = 'Calibration result from CMX'.
+  ls_conf-conf_date    = sy-datum.
+  ls_conf-conf_time    = sy-uzeit.
+  APPEND ls_conf TO lt_conf.
 
-      READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
-      IF sy-subrc = 0.
-        ev_status  = 'ERROR'.
-        ev_message = |Confirmation failed: { ls_return-message }|.
-        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-        RETURN.
-      ENDIF.
+  " Try production confirmation BAPI (S/4 safe)
+  CALL FUNCTION 'BAPI_PRODORDCONF_CREATE_TT'
+    EXPORTING
+      techtime    = 'X'
+    TABLES
+      timetickets = lt_conf
+      return      = lt_return.
 
-      "---------------------- 3. Set Main Work Complete ------------------
-      CLEAR ls_method.
-      ls_method-refnumber  = '0001'.
-      ls_method-objecttype = 'HEADER'.
-      ls_method-method     = 'SET_MAIN_WORK_COMPLETE'.
-      ls_method-objectkey  = iv_orderid.
-      APPEND ls_method TO lt_method.
+  READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
+  IF sy-subrc = 0.
+    ev_status  = 'ERROR'.
+    ev_message = |Confirmation failed: { ls_return-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
 
-      CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
-        TABLES
-          it_methods = lt_method
-          return     = lt_return.
+*--------------------------------------------------------------------*
+* Step 3: Set Main Work Complete
+*--------------------------------------------------------------------*
 
-      READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
-      IF sy-subrc = 0.
-        ev_status  = 'ERROR'.
-        ev_message = |Main work complete failed: { ls_return-message }|.
-        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
-        RETURN.
-      ENDIF.
+  CLEAR ls_method.
+  ls_method-refnumber  = '0001'.
+  ls_method-objecttype = 'HEADER'.
+  ls_method-method     = 'SET_MAIN_WORK_COMPLETE'.
+  ls_method-objectkey  = iv_orderid.
+  APPEND ls_method TO lt_method.
 
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING wait = 'X'.
+  CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+    TABLES
+      it_methods = lt_method
+      return     = lt_return.
 
-      ev_status  = 'SUCCESS'.
-      ev_message = |Calibration result posted successfully.|.
+  READ TABLE lt_return WITH KEY type = 'E' INTO ls_return.
+  IF sy-subrc = 0.
+    ev_status  = 'ERROR'.
+    ev_message = |Main work complete failed: { ls_return-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
 
-    CATCH cx_root INTO DATA(lx).
-      ev_status  = 'ERROR'.
-      ev_message = lx->get_text( ).
-  ENDTRY.
+*--------------------------------------------------------------------*
+* Step 4: Commit Work
+*--------------------------------------------------------------------*
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING wait = 'X'.
+
+  ev_status  = 'SUCCESS'.
+  ev_message = 'Calibration result posted successfully.'.
 
 ENDFUNCTION.
