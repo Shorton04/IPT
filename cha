@@ -1,24 +1,14 @@
 REPORT ztest_cmx_calib_result.
 
-DATA: lv_notif_no  TYPE qmel-qmnum VALUE '200000123',
-      lv_orderid   TYPE aufk-aufnr VALUE '60000150',
-      lv_operation TYPE afvc-vornr VALUE '0010',
-      lv_cert_no   TYPE zcert_no   VALUE 'CALIB-20251013', " <-- matches ZCERT_NO
-      lv_date_time TYPE tzntstmpl  VALUE '20251013153000',  " <-- matches TZNTSTMPL
-      lv_userid    TYPE sy-uname   VALUE sy-uname,
-      lv_passed    TYPE char1      VALUE 'X',
-      lv_status    TYPE char20,
-      lv_message   TYPE char255.
+DATA lv_cert_no   TYPE zcert_no   VALUE 'CALIB-20251013'.
+DATA lv_date_time TYPE tzntstmpl  VALUE '20251013153000'.
+DATA lv_status    TYPE char20.
+DATA lv_message   TYPE char255.
 
 CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
   EXPORTING
-    iv_notif_no  = lv_notif_no
-    iv_orderid   = lv_orderid
-    iv_operation = lv_operation
     iv_cert_no   = lv_cert_no
     iv_date_time = lv_date_time
-    iv_userid    = lv_userid
-    iv_passed    = lv_passed
   IMPORTING
     ev_status    = lv_status
     ev_message   = lv_message.
