@@ -1,20 +1,27 @@
-REPORT zshow_fm_interface.
+REPORT ztest_cmx_calib_result.
 
-DATA: lt_params TYPE abap_func_parmbind_tab,
-      ls_param  LIKE LINE OF lt_params.
+DATA: lv_status     TYPE char20,
+      lv_message    TYPE char255,
+      lv_notif_no   TYPE qmnum VALUE '200000123',
+      lv_orderid    TYPE aufnr VALUE '60000150',
+      lv_operation  TYPE vornr VALUE '0010',
+      lv_cert_no    TYPE char40 VALUE 'CALIB-20251013', "adjust this TYPE if needed
+      lv_date_time  TYPE tzntstmpl VALUE '20251013153000',
+      lv_userid     TYPE char20 VALUE 'TECH001',
+      lv_passed     TYPE char1 VALUE 'X'.
 
-PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
-
-CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
+CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
   EXPORTING
-    funcname   = p_func
-  TABLES
-    parameters = lt_params.
+    iv_notif_no  = lv_notif_no
+    iv_orderid   = lv_orderid
+    iv_operation = lv_operation
+    iv_cert_no   = lv_cert_no
+    iv_date_time = lv_date_time
+    iv_userid    = lv_userid
+    iv_passed    = lv_passed
+  IMPORTING
+    ev_status    = lv_status
+    ev_message   = lv_message.
 
-ULINE.
-WRITE: / 'PARAMETER', 20 'TYPEKIND', 40 'TYPENAME', 65 'LENGTH'.
-ULINE.
-
-LOOP AT lt_params INTO ls_param.
-  WRITE: / ls_param-name, 20 ls_param-typekind, 40 ls_param-typename, 65 ls_param-length.
-ENDLOOP.
+WRITE: / 'BAPI Result Status:', lv_status,
+       / 'Message:', lv_message.
