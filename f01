@@ -1,7 +1,7 @@
 REPORT zshow_fm_interface.
 
-DATA: lt_params TYPE TABLE OF rsexfdir,
-      ls_param  TYPE rsexfdir.
+DATA: lt_params TYPE abap_func_parmbind_tab,
+      ls_param  LIKE LINE OF lt_params.
 
 PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
 
@@ -11,6 +11,10 @@ CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
   TABLES
     parameters = lt_params.
 
+ULINE.
+WRITE: / 'PARAMETER', 20 'TYPEKIND', 40 'TYPENAME', 65 'LENGTH'.
+ULINE.
+
 LOOP AT lt_params INTO ls_param.
-  WRITE: / ls_param-parameter, ls_param-paramtype, ls_param-paramclass, ls_param-paramtypekind.
+  WRITE: / ls_param-name, 20 ls_param-typekind, 40 ls_param-typename, 65 ls_param-length.
 ENDLOOP.
