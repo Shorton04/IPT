@@ -1,7 +1,16 @@
-DATA lt_params TYPE TABLE OF rsparams.
+REPORT zshow_fm_interface.
+
+DATA: lt_params TYPE TABLE OF rsexfdir,
+      ls_param  TYPE rsexfdir.
+
+PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
+
 CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
-  EXPORTING funcname = 'ZBAPI_CMX_CALIB_RESULT'
-  TABLES    parameters = lt_params.
-LOOP AT lt_params ASSIGNING FIELD-SYMBOL(<p>).
-  WRITE: / <p>-parameter, <p>-typ, <p>-typename.
+  EXPORTING
+    funcname   = p_func
+  TABLES
+    parameters = lt_params.
+
+LOOP AT lt_params INTO ls_param.
+  WRITE: / ls_param-parameter, ls_param-paramtype, ls_param-paramclass, ls_param-paramtypekind.
 ENDLOOP.
