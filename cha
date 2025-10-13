@@ -5,41 +5,41 @@ PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
 DATA: lt_import   TYPE STANDARD TABLE OF fupararef,
       lt_export   TYPE STANDARD TABLE OF fupararef,
       lt_changing TYPE STANDARD TABLE OF fupararef,
-      lt_tables   TYPE STANDARD TABLE OF fupararef.
+      lt_tables   TYPE STANDARD TABLE OF fupararef,
+      ls_param    TYPE fupararef.
 
-" Get all parameter definitions from DDIC
 CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
   EXPORTING
     funcname   = p_func
   TABLES
-    import_tab = lt_import
-    export_tab = lt_export
+    import_tab   = lt_import
+    export_tab   = lt_export
     changing_tab = lt_changing
     tables_tab   = lt_tables.
 
 WRITE: / '*** IMPORT PARAMETERS ***'.
 ULINE.
-LOOP AT lt_import ASSIGNING FIELD-SYMBOL(<fs>).
-  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+LOOP AT lt_import INTO ls_param.
+  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
 ENDLOOP.
 
 WRITE: / ' '.
 WRITE: / '*** EXPORT PARAMETERS ***'.
 ULINE.
-LOOP AT lt_export ASSIGNING <fs>.
-  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+LOOP AT lt_export INTO ls_param.
+  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
 ENDLOOP.
 
 WRITE: / ' '.
 WRITE: / '*** CHANGING PARAMETERS ***'.
 ULINE.
-LOOP AT lt_changing ASSIGNING <fs>.
-  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+LOOP AT lt_changing INTO ls_param.
+  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
 ENDLOOP.
 
 WRITE: / ' '.
 WRITE: / '*** TABLES PARAMETERS ***'.
 ULINE.
-LOOP AT lt_tables ASSIGNING <fs>.
-  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+LOOP AT lt_tables INTO ls_param.
+  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
 ENDLOOP.
