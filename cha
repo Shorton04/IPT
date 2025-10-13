@@ -3,19 +3,24 @@ INITIALIZATION.
   DATA: lv_curr_ts TYPE timestampl,
         lv_from_ts TYPE timestampl.
 
-  " Get current system timestamp
+  " Get current UTC timestamp
   GET TIME STAMP FIELD lv_curr_ts.
 
-  " Subtract 10 minutes (600 seconds)
-  lv_from_ts = lv_curr_ts - 600.
+  " Subtract exactly 600 seconds (10 minutes)
+  CALL FUNCTION 'TIMESTAMP_DURATION_SUBTRACT'
+    EXPORTING
+      timestamp = lv_curr_ts
+      seconds   = 600
+    IMPORTING
+      result    = lv_from_ts.
 
-  " Convert timestamps to user's local time zone
+  " Convert to user time zone for display
   CONVERT TIME STAMP lv_from_ts TIME ZONE sy-zonlo
           INTO DATE so_date-low TIME so_time-low.
   CONVERT TIME STAMP lv_curr_ts TIME ZONE sy-zonlo
           INTO DATE so_date-high TIME so_time-high.
 
-  " Apply selection options
+  " Assign selection range
   so_date-sign   = 'I'.
   so_date-option = 'BT'.
   APPEND so_date.
