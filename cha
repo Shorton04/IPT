@@ -1,26 +1,29 @@
 INITIALIZATION.
 
   DATA: lv_curr_ts TYPE timestampl,
-        lv_from_ts TYPE timestampl.
+        lv_from_ts TYPE timestampl,
+        lv_sys_tzone TYPE tznzone VALUE 'UTC+8'. " System timezone (Philippines)
 
-  " Get current UTC timestamp
+  "----------------------------------------------------------
+  " Get current system timestamp (in UTC)
+  "----------------------------------------------------------
   GET TIME STAMP FIELD lv_curr_ts.
 
-  " Subtract exactly 600 seconds (10 minutes)
-  CALL FUNCTION 'TIMESTAMP_DURATION_SUBTRACT'
-    EXPORTING
-      timestamp = lv_curr_ts
-      seconds   = 600
-    IMPORTING
-      result    = lv_from_ts.
+  " Subtract exactly 10 minutes (600 seconds)
+  lv_from_ts = lv_curr_ts - 600.
 
-  " Convert to user time zone for display
-  CONVERT TIME STAMP lv_from_ts TIME ZONE sy-zonlo
+  "----------------------------------------------------------
+  " Convert both timestamps to system time zone (fixed, not per user)
+  "----------------------------------------------------------
+  CONVERT TIME STAMP lv_from_ts TIME ZONE lv_sys_tzone
           INTO DATE so_date-low TIME so_time-low.
-  CONVERT TIME STAMP lv_curr_ts TIME ZONE sy-zonlo
+
+  CONVERT TIME STAMP lv_curr_ts TIME ZONE lv_sys_tzone
           INTO DATE so_date-high TIME so_time-high.
 
-  " Assign selection range
+  "----------------------------------------------------------
+  " Apply defaults for the selection screen
+  "----------------------------------------------------------
   so_date-sign   = 'I'.
   so_date-option = 'BT'.
   APPEND so_date.
