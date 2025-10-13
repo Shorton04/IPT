@@ -1,36 +1,20 @@
 REPORT ztest_cmx_calib_result.
 
-DATA: lv_status     TYPE char20,
-      lv_message    TYPE char255,
-      lv_notif_no   TYPE qmnum,
-      lv_orderid    TYPE aufnr,
-      lv_operation  TYPE vornr,
-      lv_cert_no    TYPE char40,
-      lv_date_time  TYPE tzntstmpl,
-      lv_userid     TYPE char20,
-      lv_passed     TYPE char1.
-
-" Assign test values
-lv_notif_no  = '200000123'.   " Use existing notification
-lv_orderid   = '60000150'.    " Use existing order
-lv_operation = '0010'.
-lv_cert_no   = 'CALIB-20251013'.
-lv_date_time = '20251013T153000'.
-lv_userid    = 'TECH001'.
-lv_passed    = 'X'.
+DATA: lv_status  TYPE char20,
+      lv_message TYPE char255.
 
 CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
   EXPORTING
-    iv_notif_no  = lv_notif_no
-    iv_orderid   = lv_orderid
-    iv_operation = lv_operation
-    iv_cert_no   = lv_cert_no
-    iv_date_time = lv_date_time
-    iv_userid    = lv_userid
-    iv_passed    = lv_passed
+    iv_notif_no  = '200000123'
+    iv_orderid   = '60000150'
+    iv_operation = '0010'
+    iv_cert_no   = 'CALIB-20251013'
+    iv_date_time = '20251013153000'
+    iv_userid    = sy-uname
+    iv_passed    = 'X'
   IMPORTING
     ev_status    = lv_status
     ev_message   = lv_message.
 
-WRITE: / 'BAPI Result Status:', lv_status,
+WRITE: / 'Status:', lv_status,
        / 'Message:', lv_message.
