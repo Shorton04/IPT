@@ -2,44 +2,31 @@ REPORT zshow_fm_interface.
 
 PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
 
-DATA: lt_import   TYPE STANDARD TABLE OF fupararef,
-      lt_export   TYPE STANDARD TABLE OF fupararef,
-      lt_changing TYPE STANDARD TABLE OF fupararef,
-      lt_tables   TYPE STANDARD TABLE OF fupararef,
-      ls_param    TYPE fupararef.
+DATA: lt_interface TYPE STANDARD TABLE OF rfc_fint,
+      ls_interface LIKE LINE OF lt_interface.
 
-CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
+CALL FUNCTION 'RFC_GET_FUNCTION_INTERFACE'
   EXPORTING
-    funcname   = p_func
+    funcname = p_func
   TABLES
-    import_tab   = lt_import
-    export_tab   = lt_export
-    changing_tab = lt_changing
-    tables_tab   = lt_tables.
+    interface = lt_interface
+  EXCEPTIONS
+    system_error        = 1
+    communication_error = 2
+    OTHERS              = 3.
 
-WRITE: / '*** IMPORT PARAMETERS ***'.
-ULINE.
-LOOP AT lt_import INTO ls_param.
-  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
-ENDLOOP.
+IF sy-subrc <> 0.
+  WRITE: / 'Error reading interface for', p_func.
+  RETURN.
+ENDIF.
 
-WRITE: / ' '.
-WRITE: / '*** EXPORT PARAMETERS ***'.
 ULINE.
-LOOP AT lt_export INTO ls_param.
-  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
-ENDLOOP.
+WRITE: / 'Parameter', 25 'Direction', 40 'TypeName', 70 'Length'.
+ULINE.
 
-WRITE: / ' '.
-WRITE: / '*** CHANGING PARAMETERS ***'.
-ULINE.
-LOOP AT lt_changing INTO ls_param.
-  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
-ENDLOOP.
-
-WRITE: / ' '.
-WRITE: / '*** TABLES PARAMETERS ***'.
-ULINE.
-LOOP AT lt_tables INTO ls_param.
-  WRITE: / ls_param-parameter, 25 ls_param-dbfield, 50 ls_param-typ.
+LOOP AT lt_interface INTO ls_interface.
+  WRITE: / ls_interface-parameter,
+          25 ls_interface-direction,
+          40 ls_interface-typename,
+          70 ls_interface-length.
 ENDLOOP.
