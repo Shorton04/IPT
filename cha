@@ -1,20 +1,20 @@
-"---------------------------------------------------
-" 1️⃣ Locked (I0043 active)
-"---------------------------------------------------
-IF lv_locked_active = abap_true.
-  lv_stat = 'I0043'.
+INITIALIZATION.
 
-  IF lv_cmxs_active = abap_true.
-    " Already sent before — must update CMX that it's now Locked
-    PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-    gs_output-msg = 'Locked order with CMXS – send to CMX (skip BAPI)'.
-    APPEND gs_output TO gt_output.
-  ELSE.
-    " No CMXS, skip everything
-    gs_output-msg = 'Locked order without CMXS – skip both BAPI and CMX'.
-    PERFORM f_prepare_output USING ps_order lv_vornr lv_stat.
-    APPEND gs_output TO gt_output.
-  ENDIF.
+  DATA: lv_curr_ts TYPE tzonref-tstamps,
+        lv_from_ts TYPE tzonref-tstamps,
+        lv_date     TYPE sy-datum,
+        lv_time     TYPE sy-uzeit.
 
-  RETURN.
-ENDIF.
+  " Get current timestamp
+  GET TIME STAMP FIELD lv_curr_ts.
+
+  " Subtract 10 minutes (600 seconds)
+  lv_from_ts = lv_curr_ts - 600.
+
+  " Convert back to date/time for default screen values
+  CONVERT TIME STAMP lv_from_ts TIME ZONE sy-zonlo
+          INTO DATE lv_date TIME lv_time.
+
+  " Set default for selection fields
+  so_date-low = lv_date.
+  so_time-low = lv_time.
