@@ -2,19 +2,26 @@ INITIALIZATION.
 
   DATA: lv_curr_ts TYPE tzonref-tstamps,
         lv_from_ts TYPE tzonref-tstamps,
-        lv_date     TYPE sy-datum,
-        lv_time     TYPE sy-uzeit.
+        lv_date    TYPE sy-datum,
+        lv_time    TYPE sy-uzeit.
 
-  " Get current timestamp
+  " Get current timestamp (system time in UTC)
   GET TIME STAMP FIELD lv_curr_ts.
 
   " Subtract 10 minutes (600 seconds)
   lv_from_ts = lv_curr_ts - 600.
 
-  " Convert back to date/time for default screen values
+  " Convert to user's local date/time
   CONVERT TIME STAMP lv_from_ts TIME ZONE sy-zonlo
           INTO DATE lv_date TIME lv_time.
 
-  " Set default for selection fields
-  so_date-low = lv_date.
-  so_time-low = lv_time.
+  " Set default selection values
+  so_date-sign   = 'I'.
+  so_date-option = 'EQ'.
+  so_date-low    = lv_date.
+  APPEND so_date.
+
+  so_time-sign   = 'I'.
+  so_time-option = 'EQ'.
+  so_time-low    = lv_time.
+  APPEND so_time.
