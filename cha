@@ -1,20 +1,45 @@
-REPORT ztest_cmx_calib_result.
+REPORT zshow_fm_interface.
 
-DATA: lv_status  TYPE char20,
-      lv_message TYPE char255.
+PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
 
-CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
+DATA: lt_import   TYPE STANDARD TABLE OF fupararef,
+      lt_export   TYPE STANDARD TABLE OF fupararef,
+      lt_changing TYPE STANDARD TABLE OF fupararef,
+      lt_tables   TYPE STANDARD TABLE OF fupararef.
+
+" Get all parameter definitions from DDIC
+CALL FUNCTION 'FUNCTION_IMPORT_INTERFACE'
   EXPORTING
-    iv_notif_no  = '200000123'
-    iv_orderid   = '60000150'
-    iv_operation = '0010'
-    iv_cert_no   = 'CALIB-20251013'
-    iv_date_time = '20251013153000'
-    iv_userid    = sy-uname
-    iv_passed    = 'X'
-  IMPORTING
-    ev_status    = lv_status
-    ev_message   = lv_message.
+    funcname   = p_func
+  TABLES
+    import_tab = lt_import
+    export_tab = lt_export
+    changing_tab = lt_changing
+    tables_tab   = lt_tables.
 
-WRITE: / 'Status:', lv_status,
-       / 'Message:', lv_message.
+WRITE: / '*** IMPORT PARAMETERS ***'.
+ULINE.
+LOOP AT lt_import ASSIGNING FIELD-SYMBOL(<fs>).
+  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+ENDLOOP.
+
+WRITE: / ' '.
+WRITE: / '*** EXPORT PARAMETERS ***'.
+ULINE.
+LOOP AT lt_export ASSIGNING <fs>.
+  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+ENDLOOP.
+
+WRITE: / ' '.
+WRITE: / '*** CHANGING PARAMETERS ***'.
+ULINE.
+LOOP AT lt_changing ASSIGNING <fs>.
+  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+ENDLOOP.
+
+WRITE: / ' '.
+WRITE: / '*** TABLES PARAMETERS ***'.
+ULINE.
+LOOP AT lt_tables ASSIGNING <fs>.
+  WRITE: / <fs>-parameter, 20 <fs>-dbfield, 50 <fs>-typ.
+ENDLOOP.
