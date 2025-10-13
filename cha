@@ -1,38 +1,27 @@
-REPORT zshow_fm_interface.
+REPORT ztest_cmx_calib_result.
 
-PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
+DATA: lv_notif_no  TYPE qmel-qmnum VALUE '200000123',
+      lv_orderid   TYPE aufk-aufnr VALUE '60000150',
+      lv_operation TYPE afvc-vornr VALUE '0010',
+      lv_cert_no   TYPE zcert_no   VALUE 'CALIB-20251013', " <-- matches ZCERT_NO
+      lv_date_time TYPE tzntstmpl  VALUE '20251013153000',  " <-- matches TZNTSTMPL
+      lv_userid    TYPE sy-uname   VALUE sy-uname,
+      lv_passed    TYPE char1      VALUE 'X',
+      lv_status    TYPE char20,
+      lv_message   TYPE char255.
 
-DATA: lt_params TYPE TABLE OF fupararef,
-      ls_param  TYPE fupararef.
+CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
+  EXPORTING
+    iv_notif_no  = lv_notif_no
+    iv_orderid   = lv_orderid
+    iv_operation = lv_operation
+    iv_cert_no   = lv_cert_no
+    iv_date_time = lv_date_time
+    iv_userid    = lv_userid
+    iv_passed    = lv_passed
+  IMPORTING
+    ev_status    = lv_status
+    ev_message   = lv_message.
 
-SELECT * FROM fupararef
-  INTO TABLE lt_params
-  WHERE funcname = p_func
-  ORDER BY pposition.
-
-IF sy-subrc <> 0.
-  WRITE: / 'Function module not found:', p_func.
-  EXIT.
-ENDIF.
-
-ULINE.
-WRITE: / 'Parameter', 25 'Direction', 40 'Type / Structure', 70 'Optional'.
-ULINE.
-
-LOOP AT lt_params INTO ls_param.
-  DATA(lv_dir) = SWITCH #( 
-      ls_param-paramtype
-        WHEN 'I' THEN 'IMPORT'
-        WHEN 'E' THEN 'EXPORT'
-        WHEN 'C' THEN 'CHANGING'
-        WHEN 'T' THEN 'TABLES'
-        ELSE ls_param-paramtype ).
-
-  WRITE: / ls_param-parameter,
-           25 lv_dir,
-           40 ls_param-structure,
-           70 ls_param-optional.
-ENDLOOP.
-
-ULINE.
-WRITE: / 'Total parameters:', lines( lt_params ).
+WRITE: / 'Status  :', lv_status,
+       / 'Message :', lv_message.
