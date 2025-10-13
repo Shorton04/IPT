@@ -1,26 +1,56 @@
 *---------------------------------------------------------------------*
-*  INCLUDE ZIN_CMX_CALIBRATIONR_TOP
-*  Purpose: Global declarations for CMX Calibration Interface
+*  Function Group: ZFG_A2R_CMX_INTERFACE
+*  Include:        LZFG_A2R_CMX_INTERFACETOP
+*  Purpose:        Global Declarations for CMX ↔ SAP Calibration BAPI
 *---------------------------------------------------------------------*
 
+*----------------------------------------------------------------------*
+*  Table Declarations
+*----------------------------------------------------------------------*
 TABLES: qmel, qmma, aufk, afru, jest.
 
 *----------------------------------------------------------------------*
-*  Type Definitions
+*  Local Type Definitions
 *----------------------------------------------------------------------*
+
+"Structure used when older PM BAPI structures aren't available in S/4HANA
+TYPES: BEGIN OF bapi2080_act_item,
+         act_codegrp TYPE char10,
+         act_code    TYPE char10,
+         act_text    TYPE char40,
+       END OF bapi2080_act_item.
+
+"Structure used if BAPI_ALM_CONF_CREATE is missing (for confirmation)
+TYPES: BEGIN OF bapi_alm_conf_create,
+         orderid       TYPE aufnr,
+         operation     TYPE vornr,
+         fin_conf      TYPE char1,
+         act_work      TYPE decfloat16,
+         act_work_uom  TYPE char3,
+         conf_text     TYPE char40,
+         conf_date     TYPE sy-datum,
+         conf_time     TYPE sy-uzeit,
+       END OF bapi_alm_conf_create.
+
+"Structure for order method BAPI
+TYPES: BEGIN OF bapi_alm_order_method,
+         refnumber   TYPE char10,
+         objecttype  TYPE char10,
+         method      TYPE char30,
+         objectkey   TYPE aufnr,
+       END OF bapi_alm_order_method.
+
+"Main calibration result payload
 TYPES: BEGIN OF ty_result,
-         order_id           TYPE aufnr,          "Maintenance order
-         operation_no       TYPE vornr,          "Operation number
-         notif_no           TYPE qmnum,          "Notification number
-         technical_object   TYPE char60,         "Equipment/Functional loc
-         calib_passed       TYPE char1,          "TRUE/FALSE
-         as_found_passed    TYPE char1,
-         as_left_passed     TYPE char1,
-         calib_cert_no      TYPE char40,         "Certificate number
-         calib_date_time    TYPE tzntstmpl,      "Calibration timestamp
-         calib_user_id      TYPE char50,         "Technician
-         working_hours      TYPE decfloat16,     "Work duration
-         discrepancy_number TYPE char40,         "Discrepancy number
+         notif_no           TYPE qmnum,
+         order_id           TYPE aufnr,
+         operation_no       TYPE vornr,
+         calib_passed       TYPE char1,
+         calib_cert_no      TYPE char40,
+         calib_date_time    TYPE tzntstmpl,
+         calib_user_id      TYPE char50,
+         working_hours      TYPE decfloat16,
+         discrepancy_number TYPE char40,
        END OF ty_result.
 
 TYPES: tt_result TYPE STANDARD TABLE OF ty_result WITH DEFAULT KEY.
@@ -30,10 +60,12 @@ TYPES: tt_result TYPE STANDARD TABLE OF ty_result WITH DEFAULT KEY.
 *----------------------------------------------------------------------*
 DATA: gt_results TYPE tt_result,
       gs_result  TYPE ty_result,
-      gv_error   TYPE string.
+      gv_error   TYPE string,
+      gv_message TYPE string,
+      gv_status  TYPE char20.
 
 *----------------------------------------------------------------------*
-*  BAPI Structures
+*  BAPI Work Tables
 *----------------------------------------------------------------------*
 DATA:
   lt_act     TYPE TABLE OF bapi2080_act_item,
@@ -49,13 +81,15 @@ DATA:
 *  Constants
 *----------------------------------------------------------------------*
 CONSTANTS:
-  gc_true      TYPE char1  VALUE 'X',
-  gc_false     TYPE char1  VALUE '',
-  gc_codegrp   TYPE char10 VALUE 'CMX-CONF',
-  gc_stat_cmxc TYPE char5  VALUE 'E0010',
-  gc_stat_osnc TYPE char5  VALUE 'E0003'.
+  gc_true       TYPE char1  VALUE 'X',
+  gc_false      TYPE char1  VALUE '',
+  gc_codegrp    TYPE char10 VALUE 'CMX-CONF',
+  gc_method_mwc TYPE char30 VALUE 'SET_MAIN_WORK_COMPLETE',
+  gc_method_tec TYPE char30 VALUE 'TECHNICALCOMPLETE',
+  gc_stat_cmxc  TYPE char5  VALUE 'E0010',
+  gc_stat_osnc  TYPE char5  VALUE 'E0003'.
 
 *----------------------------------------------------------------------*
-*  Log Table Work Area (optional custom table)
+*  Log Structure (optional if you have ZCMX_RESULT_LOG table)
 *----------------------------------------------------------------------*
 DATA: ls_log TYPE zcmx_result_log.
