@@ -1,54 +1,25 @@
-*&---------------------------------------------------------------------*
-*& Include          ZIN_CMX_WORKORDER_SEL
-*&---------------------------------------------------------------------*
-TABLES: viaufkst, afvc, jest, cabn, ausp, inob, cdhdr, tj02t.
-
-SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-001.
-
-  SELECT-OPTIONS: so_werks FOR viaufkst-iwerk OBLIGATORY,   "Plant
-                  so_auart FOR viaufkst-auart OBLIGATORY,   "Order Type
-                  so_aufnr FOR viaufkst-aufnr,              "Order Number
-                  so_date  FOR sy-datum NO-EXTENSION,       "Check from Date
-                  so_time  FOR sy-uzeit NO-EXTENSION.       "Check from Time
-
-  PARAMETERS: p_test      AS CHECKBOX DEFAULT ''.   "Test Run Flag
-
-SELECTION-SCREEN END OF BLOCK b1.
-
 INITIALIZATION.
-  " Default to current date/time
-  so_date-low = sy-datum.
-  so_date-high = sy-datum.
-  so_time-low = sy-uzeit.
-  so_time-high = sy-uzeit.
-  so_date-sign = 'I'.
-  so_date-option = 'EQ'.
-  APPEND so_date.
 
-  INITIALIZATION.
+  DATA: lv_curr_ts TYPE timestampl,
+        lv_from_ts TYPE timestampl.
 
-  DATA: lv_curr_ts TYPE tzonref-tstamps,
-        lv_from_ts TYPE tzonref-tstamps,
-        lv_date    TYPE sy-datum,
-        lv_time    TYPE sy-uzeit.
-
-  " Get current timestamp (system time in UTC)
+  " Get current system timestamp
   GET TIME STAMP FIELD lv_curr_ts.
 
-  " Subtract 10 minutes
-  lv_from_ts = lv_curr_ts - 1000.
+  " Subtract 10 minutes (600 seconds)
+  lv_from_ts = lv_curr_ts - 600.
 
-  " Convert to user's local date/time
+  " Convert timestamps to user's local time zone
   CONVERT TIME STAMP lv_from_ts TIME ZONE sy-zonlo
-          INTO DATE lv_date TIME lv_time.
+          INTO DATE so_date-low TIME so_time-low.
+  CONVERT TIME STAMP lv_curr_ts TIME ZONE sy-zonlo
+          INTO DATE so_date-high TIME so_time-high.
 
-  " Set default selection values
+  " Apply selection options
   so_date-sign   = 'I'.
-  so_date-option = 'EQ'.
-  so_date-low    = lv_date.
+  so_date-option = 'BT'.
   APPEND so_date.
 
   so_time-sign   = 'I'.
-  so_time-option = 'EQ'.
-  so_time-low    = lv_time.
+  so_time-option = 'BT'.
   APPEND so_time.
