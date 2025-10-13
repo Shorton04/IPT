@@ -20,14 +20,13 @@ WRITE: / 'Parameter', 25 'Direction', 40 'Type / Structure', 70 'Optional'.
 ULINE.
 
 LOOP AT lt_params INTO ls_param.
-  DATA(lv_dir) = SWITCH string(
-    ls_param-class
-      WHEN 'I' THEN 'IMPORT'
-      WHEN 'E' THEN 'EXPORT'
-      WHEN 'C' THEN 'CHANGING'
-      WHEN 'T' THEN 'TABLES'
-      ELSE ls_param-class
-  ).
+  DATA(lv_dir) = SWITCH #( 
+      ls_param-paramtype
+        WHEN 'I' THEN 'IMPORT'
+        WHEN 'E' THEN 'EXPORT'
+        WHEN 'C' THEN 'CHANGING'
+        WHEN 'T' THEN 'TABLES'
+        ELSE ls_param-paramtype ).
 
   WRITE: / ls_param-parameter,
            25 lv_dir,
@@ -36,4 +35,4 @@ LOOP AT lt_params INTO ls_param.
 ENDLOOP.
 
 ULINE.
-WRITE: / 'Total parameters:', sy-tabix.
+WRITE: / 'Total parameters:', lines( lt_params ).
