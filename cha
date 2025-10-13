@@ -2,31 +2,28 @@ REPORT zshow_fm_interface.
 
 PARAMETERS p_func TYPE rs38l_fnam OBLIGATORY.
 
-DATA: lt_interface TYPE STANDARD TABLE OF rfc_fint,
-      ls_interface LIKE LINE OF lt_interface.
+DATA: lt_params TYPE TABLE OF abap_func_parmbind,
+      ls_param  LIKE LINE OF lt_params.
 
-CALL FUNCTION 'RFC_GET_FUNCTION_INTERFACE'
-  EXPORTING
-    funcname = p_func
-  TABLES
-    interface = lt_interface
-  EXCEPTIONS
-    system_error        = 1
-    communication_error = 2
-    OTHERS              = 3.
+TRY.
+    " Dynamically get all interface parameters
+    CALL FUNCTION 'RFC_GET_FUNCTION_INTERFACE_DEFINITION'
+      EXPORTING
+        funcname = p_func
+      TABLES
+        parameters = lt_params.
 
-IF sy-subrc <> 0.
-  WRITE: / 'Error reading interface for', p_func.
-  RETURN.
-ENDIF.
+    ULINE.
+    WRITE: / 'Parameter', 25 'Direction', 40 'Type', 60 'Length'.
+    ULINE.
 
-ULINE.
-WRITE: / 'Parameter', 25 'Direction', 40 'TypeName', 70 'Length'.
-ULINE.
+    LOOP AT lt_params INTO ls_param.
+      WRITE: / ls_param-name,
+               25 ls_param-direction,
+               40 ls_param-typename,
+               60 ls_param-length.
+    ENDLOOP.
 
-LOOP AT lt_interface INTO ls_interface.
-  WRITE: / ls_interface-parameter,
-          25 ls_interface-direction,
-          40 ls_interface-typename,
-          70 ls_interface-length.
-ENDLOOP.
+  CATCH cx_root INTO DATA(lx).
+    WRITE: / 'Error reading interface:', lx->get_text( ).
+ENDTRY.
