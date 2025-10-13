@@ -1,6 +1,6 @@
 *---------------------------------------------------------------------*
-*  Include: ZIN_CMX_WORKORDER_TOP
-*  Purpose: Global data declarations for CMX↔SAP Calibration Interface
+*  INCLUDE ZIN_CMX_CALIBRATIONR_TOP
+*  Purpose: Global declarations for CMX Calibration Interface
 *---------------------------------------------------------------------*
 
 TABLES: qmel, qmma, aufk, afru, jest.
@@ -9,19 +9,18 @@ TABLES: qmel, qmma, aufk, afru, jest.
 *  Type Definitions
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_result,
-         order_id           TYPE aufnr,          "Maintenance Order
+         order_id           TYPE aufnr,          "Maintenance order
          operation_no       TYPE vornr,          "Operation number
          notif_no           TYPE qmnum,          "Notification number
-         technical_object   TYPE char60,         "Equipment/Functional Loc
-         calib_passed       TYPE char1,          "TRUE/FALSE (0001)
-         as_found_passed    TYPE char1,          "As-found (0002)
-         as_left_passed     TYPE char1,          "As-left (0003)
-         calib_cert_no      TYPE char40,         "Certificate number (A002)
-         calib_date_time    TYPE tzntstmpl,      "Calibration timestamp (B002)
-         calib_user_id      TYPE char50,         "Technician (B003)
-         working_hours      TYPE decfloat16,     "Work duration (B006)
-         discrepancy_number TYPE char40,         "Discrepancy number (B007)
-         message            TYPE string,         "Return message
+         technical_object   TYPE char60,         "Equipment/Functional loc
+         calib_passed       TYPE char1,          "TRUE/FALSE
+         as_found_passed    TYPE char1,
+         as_left_passed     TYPE char1,
+         calib_cert_no      TYPE char40,         "Certificate number
+         calib_date_time    TYPE tzntstmpl,      "Calibration timestamp
+         calib_user_id      TYPE char50,         "Technician
+         working_hours      TYPE decfloat16,     "Work duration
+         discrepancy_number TYPE char40,         "Discrepancy number
        END OF ty_result.
 
 TYPES: tt_result TYPE STANDARD TABLE OF ty_result WITH DEFAULT KEY.
@@ -29,50 +28,34 @@ TYPES: tt_result TYPE STANDARD TABLE OF ty_result WITH DEFAULT KEY.
 *----------------------------------------------------------------------*
 *  Global Variables
 *----------------------------------------------------------------------*
-DATA: gt_results TYPE tt_result,  "Incoming payload / staging data
-      gs_result  TYPE ty_result,  "Work area for processing
-      gv_error   TYPE string,     "Latest error message
-      gv_mode    TYPE char1,      "Processing mode (optional)
-      gv_commit  TYPE abap_bool.  "Control commit flag
+DATA: gt_results TYPE tt_result,
+      gs_result  TYPE ty_result,
+      gv_error   TYPE string.
+
+*----------------------------------------------------------------------*
+*  BAPI Structures
+*----------------------------------------------------------------------*
+DATA:
+  lt_act     TYPE TABLE OF bapi2080_act_item,
+  ls_act     TYPE bapi2080_act_item,
+  lt_conf    TYPE TABLE OF bapi_alm_conf_create,
+  ls_conf    TYPE bapi_alm_conf_create,
+  lt_methods TYPE TABLE OF bapi_alm_order_method,
+  ls_method  TYPE bapi_alm_order_method,
+  lt_return  TYPE TABLE OF bapiret2,
+  ls_return  TYPE bapiret2.
 
 *----------------------------------------------------------------------*
 *  Constants
 *----------------------------------------------------------------------*
 CONSTANTS:
-  gc_true     TYPE char1 VALUE 'X',
-  gc_false    TYPE char1 VALUE '',
-  gc_codegrp  TYPE char10 VALUE 'CMX-CONF',    "Code group for activities
-  gc_uom_hr   TYPE char3  VALUE 'HR',          "Unit of measure
-  gc_stat_cmxc TYPE char5 VALUE 'E0010',       "User status CMXC
-  gc_stat_osnc TYPE char5 VALUE 'E0003',       "User status OSNC
-  gc_method_mwc  TYPE char30 VALUE 'SET_MAIN_WORK_COMPLETE',
-  gc_method_teco TYPE char30 VALUE 'TECHNICALCOMPLETE'.
+  gc_true      TYPE char1  VALUE 'X',
+  gc_false     TYPE char1  VALUE '',
+  gc_codegrp   TYPE char10 VALUE 'CMX-CONF',
+  gc_stat_cmxc TYPE char5  VALUE 'E0010',
+  gc_stat_osnc TYPE char5  VALUE 'E0003'.
 
 *----------------------------------------------------------------------*
-*  Internal Tables for BAPI Calls
-*----------------------------------------------------------------------*
-DATA:
-  lt_return   TYPE TABLE OF bapiret2,
-  lt_act      TYPE TABLE OF bapi2080_act_add,
-  lt_conf     TYPE TABLE OF bapi_alm_conf_create,
-  lt_methods  TYPE TABLE OF bapi_alm_order_method.
-
-*----------------------------------------------------------------------*
-*  Structures for BAPI
-*----------------------------------------------------------------------*
-DATA:
-  ls_act     TYPE bapi2080_act_add,
-  ls_conf    TYPE bapi_alm_conf_create,
-  ls_method  TYPE bapi_alm_order_method,
-  ls_return  TYPE bapiret2.
-
-*----------------------------------------------------------------------*
-*  Log Table Work Area (custom table)
+*  Log Table Work Area (optional custom table)
 *----------------------------------------------------------------------*
 DATA: ls_log TYPE zcmx_result_log.
-
-*----------------------------------------------------------------------*
-*  Selection Screen (optional – if you run as report)
-*----------------------------------------------------------------------*
-PARAMETERS: p_file  TYPE rlgrap-filename OBLIGATORY DEFAULT 'C:\temp\calibration.json',
-            p_test  TYPE abap_bool DEFAULT abap_true AS CHECKBOX USER-COMMAND test.
