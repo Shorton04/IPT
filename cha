@@ -1,30 +1,208 @@
-FORM f_default_time.
+FORM post_notif_activity USING    ps_result TYPE ty_result
+                         CHANGING pv_error  TYPE string.
 
-  DATA: lv_now_time TYPE sy-uzeit,
-        lv_from_time TYPE sy-uzeit,
-        lv_date TYPE sy-datum.
+  DATA: lt_act    TYPE TABLE OF bapi2080_act_add,
+        ls_act    TYPE bapi2080_act_add,
+        lt_return TYPE TABLE OF bapiret2.
 
-  " Get current system date/time
-  lv_now_time = sy-uzeit.
-  lv_date     = sy-datum.
+  CLEAR: pv_error.
 
-  " Subtract 10 minutes (600 seconds)
-  lv_from_time = lv_now_time - 600.
+  "Activity 0001: Calibration Passed
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = '0001'.
+  ls_act-act_text    = COND #( WHEN ps_result-calib_passed = 'X'
+                               THEN 'TRUE' ELSE 'FALSE' ).
+  APPEND ls_act TO lt_act.
 
-  " If subtraction crosses midnight, adjust date
-  IF lv_from_time < 0.
-    lv_from_time = lv_from_time + 86400. " add 24 hours
-    lv_date = lv_date - 1.
+  "Activity A002: Certificate Number
+  CLEAR ls_act.
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = 'A002'.
+  ls_act-act_text    = ps_result-calib_cert_no.
+  APPEND ls_act TO lt_act.
+
+  "Activity B002: Calibration Date
+  CLEAR ls_act.
+  ls_act-act_codegrp = 'CMX-CONF'.
+  ls_act-act_code    = 'B002'.
+  ls_act-act_text    = ps_result-calib_date_time.
+  APPEND ls_act TO lt_act.
+
+  CALL FUNCTION 'BAPI_ALM_NOTIF_DATA_ADD'
+    EXPORTING
+      number   = ps_result-notif_no
+    TABLES
+      activity = lt_act
+      return   = lt_return.
+
+  READ TABLE lt_return WITH KEY type = 'E' INTO DATA(ls_ret).
+  IF sy-subrc = 0.
+    pv_error = |Notification Activity Error: { ls_ret-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
   ENDIF.
 
-  " Set time range (From = now - 10 mins, To = now)
-  APPEND VALUE #( sign = 'I' option = 'BT'
-                  low  = lv_from_time
-                  high = lv_now_time ) TO so_time.
+  CALL FUNCTION 'BAPI_ALM_NOTIF_SAVE'
+    EXPORTING
+      number = ps_result-notif_no
+    TABLES
+      return = lt_return.
 
-  " Set date range
-  APPEND VALUE #( sign = 'I' option = 'BT'
-                  low  = lv_date
-                  high = sy-datum ) TO so_date.
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+    EXPORTING wait = 'X'.
 
 ENDFORM.
+
+
+
+
+
+
+
+FORM post_order_confirmation USING    ps_result TYPE ty_result
+                             CHANGING pv_error  TYPE string.
+
+  DATA: lt_conf   TYPE TABLE OF bapi_alm_conf_create,
+        ls_conf   TYPE bapi_alm_conf_create,
+        lt_return TYPE TABLE OF bapiret2.
+
+  CLEAR pv_error.
+
+  ls_conf-orderid       = ps_result-order_id.
+  ls_conf-operation     = ps_result-operation_no.
+  ls_conf-fin_conf      = 'X'. " Final confirmation
+  ls_conf-act_work      = ps_result-working_hours.
+  ls_conf-act_work_uom  = 'HR'.
+  ls_conf-conf_text     = 'Calibration result from CMX'.
+  ls_conf-conf_date     = ps_result-calib_date_time(8).
+  ls_conf-conf_time     = ps_result-calib_date_time+8(6).
+  APPEND ls_conf TO lt_conf.
+
+  CALL FUNCTION 'BAPI_ALM_CONF_CREATE'
+    EXPORTING
+      orderid  = ps_result-order_id
+    TABLES
+      conf_tab = lt_conf
+      return   = lt_return.
+
+  READ TABLE lt_return WITH KEY type = 'E' INTO DATA(ls_ret).
+  IF sy-subrc = 0.
+    pv_error = |Confirmation Error: { ls_ret-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+
+ENDFORM.
+
+
+
+
+
+
+FORM post_main_work_complete USING    ps_result TYPE ty_result
+                             CHANGING pv_error  TYPE string.
+
+  DATA: lt_methods TYPE TABLE OF bapi_alm_order_method,
+        ls_method  TYPE bapi_alm_order_method,
+        lt_return  TYPE TABLE OF bapiret2.
+
+  CLEAR pv_error.
+
+  ls_method-refnumber  = '0001'.
+  ls_method-objecttype = 'HEADER'.
+  ls_method-method     = 'SET_MAIN_WORK_COMPLETE'.
+  ls_method-objectkey  = ps_result-order_id.
+  APPEND ls_method TO lt_methods.
+
+  CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+    TABLES
+      it_methods = lt_methods
+      return     = lt_return.
+
+  READ TABLE lt_return WITH KEY type = 'E' INTO DATA(ls_ret).
+  IF sy-subrc = 0.
+    pv_error = |Main Work Complete Error: { ls_ret-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+
+ENDFORM.
+
+
+
+
+
+FORM post_teco USING    ps_result TYPE ty_result
+               CHANGING pv_error  TYPE string.
+
+  DATA: lt_methods TYPE TABLE OF bapi_alm_order_method,
+        ls_method  TYPE bapi_alm_order_method,
+        lt_return  TYPE TABLE OF bapiret2.
+
+  CLEAR pv_error.
+
+  ls_method-refnumber  = '0001'.
+  ls_method-objecttype = 'HEADER'.
+  ls_method-method     = 'TECHNICALCOMPLETE'.
+  ls_method-objectkey  = ps_result-order_id.
+  APPEND ls_method TO lt_methods.
+
+  CALL FUNCTION 'BAPI_ALM_ORDER_MAINTAIN'
+    TABLES
+      it_methods = lt_methods
+      return     = lt_return.
+
+  READ TABLE lt_return WITH KEY type = 'E' INTO DATA(ls_ret).
+  IF sy-subrc = 0.
+    pv_error = |TECO Error: { ls_ret-message }|.
+    CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+
+ENDFORM.
+
+
+
+
+
+
+
+aFORM update_user_status USING    ps_result TYPE ty_result
+                        CHANGING pv_error  TYPE string.
+
+  DATA: lv_objnr TYPE jest-objnr.
+
+  SELECT SINGLE objnr INTO lv_objnr FROM aufk
+    WHERE aufnr = ps_result-order_id.
+
+  IF sy-subrc <> 0.
+    pv_error = 'Order not found for status update'.
+    RETURN.
+  ENDIF.
+
+  IF ps_result-calib_passed = 'X'.
+    CALL FUNCTION 'STATUS_CHANGE_EXTERN'
+      EXPORTING
+        objnr = lv_objnr
+        stsma = 'E0010'. "CMXC
+  ELSE.
+    CALL FUNCTION 'STATUS_CHANGE_EXTERN'
+      EXPORTING
+        objnr = lv_objnr
+        stsma = 'E0003'. "OSNC
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_TRANSACTION_COMMIT' EXPORTING wait = 'X'.
+
+ENDFORM.
+
+
+
+
+a
