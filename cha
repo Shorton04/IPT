@@ -1,50 +1,30 @@
-INITIALIZATION.
+FORM f_default_time.
 
-  DATA: lv_curr_ts   TYPE timestampl,
-        lv_from_ts   TYPE timestampl,
-        lv_sys_tzone TYPE tznzone,
-        lv_date_from TYPE sy-datum,
-        lv_time_from TYPE sy-uzeit,
-        lv_date_to   TYPE sy-datum,
-        lv_time_to   TYPE sy-uzeit.
+  DATA: lv_now_time TYPE sy-uzeit,
+        lv_from_time TYPE sy-uzeit,
+        lv_date TYPE sy-datum.
 
-  "----------------------------------------------------------
-  " Get SAP system time zone dynamically (not user-specific)
-  "----------------------------------------------------------
-  CALL FUNCTION 'TZON_GET_SYSTEM_TZONE'
-    IMPORTING
-      ef_tzone = lv_sys_tzone.
+  " Get current system date/time
+  lv_now_time = sy-uzeit.
+  lv_date     = sy-datum.
 
-  IF lv_sys_tzone IS INITIAL.
-    lv_sys_tzone = 'UTC'. " fallback if system timezone not found
+  " Subtract 10 minutes (600 seconds)
+  lv_from_time = lv_now_time - 600.
+
+  " If subtraction crosses midnight, adjust date
+  IF lv_from_time < 0.
+    lv_from_time = lv_from_time + 86400. " add 24 hours
+    lv_date = lv_date - 1.
   ENDIF.
 
-  "----------------------------------------------------------
-  " Get current system timestamp and subtract 10 minutes
-  "----------------------------------------------------------
-  GET TIME STAMP FIELD lv_curr_ts.
-  lv_from_ts = lv_curr_ts - 600. " subtract 600 seconds (10 minutes)
+  " Set time range (From = now - 10 mins, To = now)
+  APPEND VALUE #( sign = 'I' option = 'BT'
+                  low  = lv_from_time
+                  high = lv_now_time ) TO so_time.
 
-  "----------------------------------------------------------
-  " Convert both timestamps to system time zone
-  "----------------------------------------------------------
-  CONVERT TIME STAMP lv_from_ts TIME ZONE lv_sys_tzone
-          INTO DATE lv_date_from TIME lv_time_from.
+  " Set date range
+  APPEND VALUE #( sign = 'I' option = 'BT'
+                  low  = lv_date
+                  high = sy-datum ) TO so_date.
 
-  CONVERT TIME STAMP lv_curr_ts TIME ZONE lv_sys_tzone
-          INTO DATE lv_date_to TIME lv_time_to.
-
-  "----------------------------------------------------------
-  " Apply to selection screen defaults
-  "----------------------------------------------------------
-  so_date-sign   = 'I'.
-  so_date-option = 'BT'.
-  so_date-low    = lv_date_from.
-  so_date-high   = lv_date_to.
-  APPEND so_date.
-
-  so_time-sign   = 'I'.
-  so_time-option = 'BT'.
-  so_time-low    = lv_time_from.
-  so_time-high   = lv_time_to.
-  APPEND so_time.
+ENDFORM.
