@@ -1,9 +1,5 @@
 {
-  "CMX_MaintOrder_Floc": "735-MP330A2WT0026_IF?0100000000000991433",
+  "CMX_MaintOrder_Floc": "735-MP330A2WT0026_IF",
   "CMX_MaintOrder_OperationNum": "000035215282_0010",
-  "Code0001_CalibratedPassed": "true",
-  "Code0002_AsFoundPassed": "true",
-  "Code0003_AsLeftPassed": "",
-  "A002_Certificate_Number": "LONZA-425895-CMX",
-  "MessageID": "462957"
+  "Code0001_CalibratedPassed": "true"
 }
