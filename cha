@@ -2,7 +2,7 @@ FUNCTION z_in_cmx_calib_result.
 *"--------------------------------------------------------------------
 *"*"Local Interface:
 *"  IMPORTING
-*"     VALUE(iv_json_payload) TYPE zjson_text
+*"     VALUE(iv_json_payload) TYPE char200
 *"  EXPORTING
 *"     VALUE(ev_status) TYPE char10
 *"     VALUE(ev_message) TYPE char255
@@ -18,22 +18,22 @@ FUNCTION z_in_cmx_calib_result.
   TRY.
 
       "--- HARDCODED JSON PAYLOAD FOR TESTING ---
-      lv_json = `{
-        "CMX_MAINTORDER_FLOC": "Y11-F6-SC21111",
-        "CMX_MAINTORDER_OPERATIONNUM": "60000115_0010",
-        "CODE0001_CALIBRATEDPASSED": "true",
-        "CODE0002_ASFOUNDPASSED": "true",
-        "CODE0003_ASLEFTPASSED": "",
-        "A001_FUNCTION": "Floor Scale Capacity 32kg",
-        "A002_CERTIFICATE_NUMBER": "LONZA-425895-CMX",
-        "B001_EVENTTYPE": "AsFound",
-        "B002_CALIBRATIONDATE_TIME": "2025-10-09T18:45:56",
-        "B003_CALIBRATEDBY_USERID": "MS41218",
-        "B004_CALIBRATION_INCOMPLETE": "false",
-        "B005_MAXERROR": "0 g",
-        "MESSAGEID": "462957",
-        "POMESSAGEID": "58d2acab784111f084ac0000007ec93f"
-      }`.
+      lv_json = '{' &&
+        '"CMX_MAINTORDER_FLOC": "Y11-F6-SC21111",' &&
+        '"CMX_MAINTORDER_OPERATIONNUM": "60000115_0010",' &&
+        '"CODE0001_CALIBRATEDPASSED": "true",' &&
+        '"CODE0002_ASFOUNDPASSED": "true",' &&
+        '"CODE0003_ASLEFTPASSED": "",' &&
+        '"A001_FUNCTION": "Floor Scale Capacity 32kg",' &&
+        '"A002_CERTIFICATE_NUMBER": "LONZA-425895-CMX",' &&
+        '"B001_EVENTTYPE": "AsFound",' &&
+        '"B002_CALIBRATIONDATE_TIME": "2025-10-09T18:45:56",' &&
+        '"B003_CALIBRATEDBY_USERID": "MS41218",' &&
+        '"B004_CALIBRATION_INCOMPLETE": "false",' &&
+        '"B005_MAXERROR": "0 g",' &&
+        '"MESSAGEID": "462957",' &&
+        '"POMESSAGEID": "58d2acab784111f084ac0000007ec93f"' &&
+      '}'.
 
       "--- Convert JSON into structure ---
       /ui2/cl_json=>deserialize(
@@ -70,14 +70,15 @@ FUNCTION z_in_cmx_calib_result.
         INTO @ls_qmma.
 
       IF sy-subrc = 0.
-        ls_qmma-matxt = ls_payload-a002_certificate_number.
-        ls_qmma-aenam = sy-uname.
-        ls_qmma-aedat = sy-datum.
+        ls_qmma-matxt  = ls_payload-a002_certificate_number.
+        ls_qmma-aenam  = sy-uname.
+        ls_qmma-aedat  = sy-datum.
         ls_qmma-aezeit = sy-uzeit.
 
         MODIFY qmma FROM ls_qmma.
         CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-          EXPORTING wait = 'X'.
+          EXPORTING
+            wait = 'X'.
 
         ev_status  = 'SUCCESS'.
         ev_message = |QMMA updated for order { lv_order } with certificate { ls_payload-a002_certificate_number }|.
