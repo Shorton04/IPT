@@ -1,17 +1,12 @@
-REPORT ztest_cmx_calib_result.
-
-DATA lv_cert_no   TYPE zcert_no   VALUE 'CALIB-20251013'.
-DATA lv_date_time TYPE tzntstmpl  VALUE '20251013153000'.
-DATA lv_status    TYPE char20.
-DATA lv_message   TYPE char255.
-
-CALL FUNCTION 'ZBAPI_CMX_CALIB_RESULT'
-  EXPORTING
-    iv_cert_no   = lv_cert_no
-    iv_date_time = lv_date_time
-  IMPORTING
-    ev_status    = lv_status
-    ev_message   = lv_message.
-
-WRITE: / 'Status  :', lv_status,
-       / 'Message :', lv_message.
+{
+  "order_number": "60000150",
+  "notification_number": "200001234",
+  "calibration_passed": true,
+  "as_found_passed": false,
+  "as_left_passed": true,
+  "certificate_number": "LONZA-425895-CMX",
+  "calibration_datetime": "2025-09-22T04:24:31",
+  "technician_id": "CI12789",
+  "discrepancy_number": "TW1415024",
+  "working_hours": "1.5"
+}
