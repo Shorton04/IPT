@@ -1,3 +1,112 @@
-The Object and Posting amounts differ (120 vs 100) because the system performed currency conversion in the opposite direction or at a different exchange rate.
-The Object amount reflects the WBS currency value, while the Posting amount reflects the company code currency after conversion.
-Once the conversion direction or exchange rate alignment is corrected, both values will align proportionally.
+  METHOD product_price_wo_explosion_poc.
+
+    DATA:lv_kbetr TYPE kbetr_kond,
+         lv_menge TYPE menge_d.
+
+    DO.
+      CASE sy-index.
+        WHEN 1.
+*1.A576 Plant/WBS/Material
+          SELECT SINGLE knumh FROM zta2d_a576 INTO @DATA(lv_knumh)
+                              WHERE kappl        EQ 'V'                 AND
+                                    kschl        EQ 'ZMRQ'              AND
+                                    werks        EQ @is_aufm-werks      AND
+                                    matnr        EQ @is_aufm-matnr      AND
+                                    zzps_psp_pnr EQ @is_aufm-ps_psp_pnr AND
+                                    datbi        GE @is_aufm-budat      AND
+                                    datab        LE @is_aufm-budat.
+        WHEN 2.
+*2.A579 Plant/Customer/WBS Element
+          SELECT SINGLE knumh FROM zta2d_a579 INTO @lv_knumh
+                              WHERE kappl        EQ 'V'                 AND
+                                    kschl        EQ 'ZMRQ'              AND
+                                    werks        EQ @is_aufm-werks      AND
+                                    kunnr        EQ @iv_kunnr           AND
+                                    zzps_psp_pnr EQ @is_aufm-ps_psp_pnr AND
+                                    datbi        GE @is_aufm-budat      AND
+                                    datab        LE @is_aufm-budat.
+        WHEN 3.
+*3.A142 Dependent on material
+          SELECT SINGLE knumh FROM a142 INTO @lv_knumh
+                              WHERE kappl EQ 'V'            AND
+                                    kschl EQ 'ZMRQ'         AND
+                                    werks EQ @is_aufm-werks AND
+                                    matnr EQ @is_aufm-matnr AND
+                                    datbi GE @is_aufm-budat AND
+                                    datab LE @is_aufm-budat.
+        WHEN 4.
+*4.A578 Plant/Customer
+          SELECT SINGLE knumh FROM zta2d_a578 INTO @lv_knumh
+                              WHERE kappl EQ 'V'            AND
+                                    kschl EQ 'ZMRQ'         AND
+                                    werks EQ @is_aufm-werks AND
+                                    kunnr EQ @iv_kunnr      AND
+                                    datbi GE @is_aufm-budat AND
+                                    datab LE @is_aufm-budat.
+        WHEN OTHERS.
+          EXIT.
+      ENDCASE.
+      CHECK NOT lv_knumh IS INITIAL.
+      SELECT SINGLE * FROM konp INTO @DATA(ls_konp)
+                      WHERE knumh    = @lv_knumh AND
+                            loevm_ko = @space.
+      CHECK sy-subrc = 0.
+      EXIT.
+    ENDDO.
+    CHECK NOT ls_konp IS INITIAL.
+    ev_kznep      = ls_konp-kznep.
+    ev_cond_found = abap_true.
+*Currency Conversions
+    IF is_aufm-waers <> ls_konp-konwa.
+      CALL FUNCTION 'CONVERT_TO_FOREIGN_CURRENCY'
+        EXPORTING
+          date             = is_aufm-budat
+          foreign_currency = is_aufm-waers
+          local_amount     = ls_konp-kbetr
+          local_currency   = ls_konp-konwa
+        IMPORTING
+          foreign_amount   = lv_kbetr
+        EXCEPTIONS
+          no_rate_found    = 1
+          overflow         = 2
+          no_factors_found = 3
+          no_spread_found  = 4
+          derived_2_times  = 5
+          OTHERS           = 6.
+      IF sy-subrc <> 0.
+* Implement suitable error handling here
+      ENDIF.
+    ELSE.
+      lv_kbetr = ls_konp-kbetr.
+    ENDIF.
+*UOM Conversions
+    IF is_aufm-meins <> ls_konp-kmein.
+      lv_menge = ls_konp-kpein.
+      CALL FUNCTION 'MATERIAL_UNIT_CONVERSION'
+        EXPORTING
+          input                = lv_menge
+          kzmeinh              = 'X'
+          matnr                = is_aufm-matnr
+          meinh                = ls_konp-kmein
+          meins                = is_aufm-meins
+        IMPORTING
+          output               = lv_menge
+        EXCEPTIONS
+          conversion_not_found = 1
+          input_invalid        = 2
+          material_not_found   = 3
+          meinh_not_found      = 4
+          meins_missing        = 5
+          no_meinh             = 6
+          output_invalid       = 7
+          overflow             = 8
+          OTHERS               = 9.
+      IF sy-subrc <> 0.
+* Implement suitable error handling here
+      ENDIF.
+    ELSE.
+      lv_menge = ls_konp-kpein.
+    ENDIF.
+    ev_amount = lv_kbetr / lv_menge.
+
+  ENDMETHOD.
