@@ -1,2 +1,50 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<ns0:MT_CMX_Maintenance_Order xmlns:ns0="http://lonza.com/xi/ERP-CMX"><CMX_MaintOrder_Floc>735-MP330A2WT0026_IF?0100000000000991433</CMX_MaintOrder_Floc><CMX_MaintOrder_OperationNum>000035215282_0010</CMX_MaintOrder_OperationNum><Code0001_CalibratedPassed>true</Code0001_CalibratedPassed><Code0002_AsFoundPassed>true</Code0002_AsFoundPassed><Code0003_AsLeftPassed xsi:nil="true" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></Code0003_AsLeftPassed><CalibrationEvents><A001_Function>L_W1-005-3</A001_Function><A002_Certificate_Number>LONZA-425895-CMX</A002_Certificate_Number><Events><B001_EventType>AsFound</B001_EventType><B002_CalibrationDate_Time>2025-08-13T14:28:53</B002_CalibrationDate_Time><B003_CalibratedBy_UserID>ci12789</B003_CalibratedBy_UserID><B004_Calibration_Incomplete>false</B004_Calibration_Incomplete><B005_MaxError>0 g</B005_MaxError><B006_WorkingHours xsi:nil="true" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></B006_WorkingHours><B007_DiscrepancyNumber></B007_DiscrepancyNumber><B008_SingleUseStandard_ref></B008_SingleUseStandard_ref><B009_SingleUseStandard_ExpDate></B009_SingleUseStandard_ExpDate><B012_Request_2ndApproval>false</B012_Request_2ndApproval></Events><Events><B001_EventType>AsFound</B001_EventType><B002_CalibrationDate_Time>2025-08-13T14:29:55</B002_CalibrationDate_Time><B003_CalibratedBy_UserID>ci12789</B003_CalibratedBy_UserID><B004_Calibration_Incomplete>false</B004_Calibration_Incomplete><B005_MaxError>0 g</B005_MaxError><B006_WorkingHours xsi:nil="true" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"></B006_WorkingHours><B007_DiscrepancyNumber></B007_DiscrepancyNumber><B008_SingleUseStandard_ref></B008_SingleUseStandard_ref><B009_SingleUseStandard_ExpDate></B009_SingleUseStandard_ExpDate><B012_Request_2ndApproval>false</B012_Request_2ndApproval></Events></CalibrationEvents><MessageID>462957</MessageID><POMessageID>58d2acab784111f084ac0000007ec93f</POMessageID></ns0:MT_CMX_Maintenance_Order>
+FUNCTION z_in_cmx_calib_result.
+*"--------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(iv_json_payload) TYPE csequence
+*"  EXPORTING
+*"     VALUE(ev_status) TYPE char10
+*"     VALUE(ev_message) TYPE char255
+*"--------------------------------------------------------------------
+
+  DATA: ls_payload TYPE zcmx_calib_result,
+        lv_order   TYPE aufnr,
+        lv_vornr   TYPE vornr.
+
+  TRY.
+      " 1️⃣ Parse JSON to ABAP structure
+      /ui2/cl_json=>deserialize(
+        EXPORTING
+          json = iv_json_payload
+        CHANGING
+          data = ls_payload ).
+
+      " 2️⃣ Split order + operation (e.g. 000035215282_0010)
+      SPLIT ls_payload-cmx_maintorder_operationnum
+        AT '_' INTO lv_order lv_vornr.
+
+      " 3️⃣ Validate input
+      IF lv_order IS INITIAL.
+        ev_status  = 'ERROR'.
+        ev_message = 'Order number missing in JSON payload'.
+        RETURN.
+      ENDIF.
+
+      " 4️⃣ TODO: Add QMMA or order update logic here later
+      WRITE: / 'Simulated update for order:', lv_order, 'operation:', lv_vornr.
+
+      " 5️⃣ Commit (if DB update)
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING
+          wait = 'X'.
+
+      ev_status  = 'SUCCESS'.
+      ev_message = |Calibration data for order { lv_order } processed.|.
+
+    CATCH cx_root INTO DATA(lx_err).
+      ev_status  = 'ERROR'.
+      ev_message = lx_err->get_text( ).
+  ENDTRY.
+
+ENDFUNCTION.
