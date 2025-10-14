@@ -1,95 +1,20 @@
-FUNCTION z_in_cmx_calib_result.
-*"--------------------------------------------------------------------
-*"*"Local Interface:
-*"  IMPORTING
-*"     VALUE(iv_json_payload) TYPE char200
-*"  EXPORTING
-*"     VALUE(ev_status) TYPE char10
-*"     VALUE(ev_message) TYPE char255
-*"--------------------------------------------------------------------
+FORM build_toolbar USING rt_toolbar TYPE slis_t_toolbar.
+  DATA ls_toolbar TYPE stb_button.
 
-  DATA: ls_payload TYPE zcmx_calib_result,
-        lv_order   TYPE aufnr,
-        lv_vornr   TYPE vornr,
-        lv_json    TYPE string,
-        lv_qmnum   TYPE qmnum,
-        ls_qmma    TYPE qmma.
+  ls_toolbar-function = 'CHECK'.
+  ls_toolbar-icon = icon_okay.
+  ls_toolbar-text = 'Check'.
+  ls_toolbar-quickinfo = 'Confirm selection'.
+  APPEND ls_toolbar TO rt_toolbar.
+ENDFORM.
 
-  TRY.
-
-      "--- HARDCODED JSON PAYLOAD FOR TESTING ---
-      lv_json = '{' &&
-        '"CMX_MAINTORDER_FLOC": "Y11-F6-SC21111",' &&
-        '"CMX_MAINTORDER_OPERATIONNUM": "60000115_0010",' &&
-        '"CODE0001_CALIBRATEDPASSED": "true",' &&
-        '"CODE0002_ASFOUNDPASSED": "true",' &&
-        '"CODE0003_ASLEFTPASSED": "",' &&
-        '"A001_FUNCTION": "Floor Scale Capacity 32kg",' &&
-        '"A002_CERTIFICATE_NUMBER": "LONZA-425895-CMX",' &&
-        '"B001_EVENTTYPE": "AsFound",' &&
-        '"B002_CALIBRATIONDATE_TIME": "2025-10-09T18:45:56",' &&
-        '"B003_CALIBRATEDBY_USERID": "MS41218",' &&
-        '"B004_CALIBRATION_INCOMPLETE": "false",' &&
-        '"B005_MAXERROR": "0 g",' &&
-        '"MESSAGEID": "462957",' &&
-        '"POMESSAGEID": "58d2acab784111f084ac0000007ec93f"' &&
-      '}'.
-
-      "--- Convert JSON into structure ---
-      /ui2/cl_json=>deserialize(
-        EXPORTING
-          json = lv_json
-        CHANGING
-          data = ls_payload ).
-
-      "--- Split Order and Operation ---
-      SPLIT ls_payload-cmx_maintorder_operationnum
-        AT '_' INTO lv_order lv_vornr.
-
-      IF lv_order IS INITIAL.
-        ev_status  = 'ERROR'.
-        ev_message = 'Order number missing in JSON payload'.
-        RETURN.
-      ENDIF.
-
-      "--- Find Notification from Order ---
-      SELECT SINGLE qmnum FROM afih
-        WHERE aufnr = @lv_order
-        INTO @lv_qmnum.
-
-      IF sy-subrc <> 0.
-        ev_status  = 'ERROR'.
-        ev_message = |No notification found for order { lv_order }|.
-        RETURN.
-      ENDIF.
-
-      "--- Update QMMA ---
-      SELECT SINGLE * FROM qmma
-        WHERE qmnum = @lv_qmnum
-          AND manum = @lv_vornr
-        INTO @ls_qmma.
-
-      IF sy-subrc = 0.
-        ls_qmma-matxt  = ls_payload-a002_certificate_number.
-        ls_qmma-aenam  = sy-uname.
-        ls_qmma-aedat  = sy-datum.
-        ls_qmma-aezeit = sy-uzeit.
-
-        MODIFY qmma FROM ls_qmma.
-        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-          EXPORTING
-            wait = 'X'.
-
-        ev_status  = 'SUCCESS'.
-        ev_message = |QMMA updated for order { lv_order } with certificate { ls_payload-a002_certificate_number }|.
-      ELSE.
-        ev_status  = 'ERROR'.
-        ev_message = |No QMMA record found for order { lv_order } operation { lv_vornr }|.
-      ENDIF.
-
-    CATCH cx_root INTO DATA(lx_err).
-      ev_status  = 'ERROR'.
-      ev_message = lx_err->get_text( ).
-  ENDTRY.
-
-ENDFUNCTION.
+FORM user_command USING r_ucomm LIKE sy-ucomm rs_selfield TYPE slis_selfield.
+  CASE r_ucomm.
+    WHEN 'CHECK'.
+      ev_choice = 'X'.
+      LEAVE TO SCREEN 0.
+    WHEN '&IC1'. " double click
+      ev_choice = 'X'.
+      LEAVE TO SCREEN 0.
+  ENDCASE.
+ENDFORM.
