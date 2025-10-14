@@ -3,3 +3,56 @@
   "CMX_MaintOrder_OperationNum": "000035215282_0010",
   "Code0001_CalibratedPassed": "true"
 }
+
+
+FUNCTION z_in_cmx_calib_result.
+*"--------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(iv_json_payload) TYPE csequence
+*"  EXPORTING
+*"     VALUE(ev_status) TYPE char10
+*"     VALUE(ev_message) TYPE char255
+*"--------------------------------------------------------------------
+
+  DATA: ls_payload TYPE zcmx_calib_result,
+        lv_order   TYPE aufnr,
+        lv_vornr   TYPE vornr,
+        lv_json    TYPE string. " <-- Add this line
+
+  TRY.
+      " 🔹 Convert to string first (important!)
+      lv_json = iv_json_payload.
+
+      " 🔹 Now parse JSON
+      /ui2/cl_json=>deserialize(
+        EXPORTING
+          json = lv_json
+        CHANGING
+          data = ls_payload ).
+
+      " 🔹 Split order and operation (e.g. 000035215282_0010)
+      SPLIT ls_payload-cmx_maintorder_operationnum
+        AT '_' INTO lv_order lv_vornr.
+
+      IF lv_order IS INITIAL.
+        ev_status  = 'ERROR'.
+        ev_message = 'Order number missing in JSON payload'.
+        RETURN.
+      ENDIF.
+
+      " 🔹 Dummy update simulation
+      WRITE: / 'Order:', lv_order, 'Operation:', lv_vornr.
+
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING wait = 'X'.
+
+      ev_status  = 'SUCCESS'.
+      ev_message = |Calibration data for order { lv_order } processed.|.
+
+    CATCH cx_root INTO DATA(lx_err).
+      ev_status  = 'ERROR'.
+      ev_message = lx_err->get_text( ).
+  ENDTRY.
+
+ENDFUNCTION.
