@@ -1,152 +1,112 @@
-  METHOD billing_plan_update.
+  METHOD product_price_wo_explosion_poc.
 
-    DATA:lt_bdcdata  TYPE bdcdata_tab,
-         lt_messages TYPE tab_bdcmsgcoll,
-         ls_options  TYPE ctu_params,
-         ls_data     TYPE zkcgt_wbs_recog,
-         lv_wbs      TYPE ps_posid,
-         lv_project  TYPE ps_pspid,
-         lv_date     TYPE char10,
-         lv_message  TYPE bapi_msg,
-         lv_string   TYPE string.
+    DATA:lv_kbetr TYPE kbetr_kond,
+         lv_menge TYPE menge_d.
 
-*BDC Options
-    CLEAR:lt_bdcdata,lt_messages,ls_options,ls_data,lv_wbs,
-          lv_project,lv_date,lv_message,lv_string.
-    ls_options-dismode = 'N'.
-    ls_options-updmode = 'A'.
-    ls_options-defsize = abap_true.
-
-    ls_data = is_data.
-
-    SELECT SINGLE pspnr,psphi,fplnr FROM prps INTO @DATA(ls_prps)
-                                    WHERE pspnr = @ls_data-pspnr.
-*WBS
-    CALL FUNCTION 'CONVERSION_EXIT_ABPSP_OUTPUT'
-      EXPORTING
-        input  = ls_prps-pspnr
-      IMPORTING
-        output = lv_wbs.
-*Project
-    CALL FUNCTION 'CONVERSION_EXIT_KONPD_OUTPUT'
-      EXPORTING
-        input  = ls_prps-psphi
-      IMPORTING
-        output = lv_project.
-*Date
-    CALL FUNCTION 'CONVERT_DATE_TO_EXTERNAL'
-      EXPORTING
-        date_internal            = sy-datum
-      IMPORTING
-        date_external            = lv_date
-      EXCEPTIONS
-        date_internal_is_invalid = 1
-        OTHERS                   = 2.
-    IF sy-subrc <> 0.
-* Implement suitable error handling here
-    ENDIF.
-
-    PERFORM bdc_dynpro IN PROGRAM (sy-cprog) USING 'SAPLCJWB' '0100'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_CURSOR' '*PROJ-PSPID'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_OKCODE' '=LETB'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING '*PROJ-PSPID' lv_project
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING '*PRPS-POSID' lv_wbs
-                                             CHANGING lt_bdcdata.
-
-    PERFORM bdc_dynpro IN PROGRAM (sy-cprog) USING 'SAPLCJWB' '0901'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_OKCODE' '=FPLA'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_CURSOR' 'PRPS-STUFE(01)'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'RCJ_MARKL-MARK(01)' 'X'
-                                             CHANGING lt_bdcdata.
-
-    IF ls_prps-fplnr IS INITIAL.
-      PERFORM bdc_dynpro IN PROGRAM (sy-cprog) USING 'SAPLCJBP' '0200'
-                                               CHANGING lt_bdcdata.
-      PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_OKCODE' '=OK'
-                                               CHANGING lt_bdcdata.
-      PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_CURSOR' 'RP11-FPART'
-                                               CHANGING lt_bdcdata.
-      PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'RP11-FPART' '31'
-                                               CHANGING lt_bdcdata.
-    ENDIF.
-
-    PERFORM bdc_dynpro IN PROGRAM (sy-cprog) USING 'SAPLV60F' '0040'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_CURSOR' 'FPLT-FAKWR(01)'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_OKCODE' '=BACK'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'FPLA-BEDAT' lv_date
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'FPLT-AFDAT(01)' lv_date
-                                             CHANGING lt_bdcdata.
-    IF NOT ls_data-amount_posting IS INITIAL.
-      PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'FPLT-FAKWR(01)' ls_data-amount_posting
-                                               CHANGING lt_bdcdata.
-    ELSE.
-      PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'FPLT-FAKWR(01)' ls_data-amount
-                                               CHANGING lt_bdcdata.
-    ENDIF.
-
-    PERFORM bdc_dynpro IN PROGRAM (sy-cprog) USING 'SAPLCJWB' '0901'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_OKCODE' '=BU'
-                                             CHANGING lt_bdcdata.
-    PERFORM bdc_field  IN PROGRAM (sy-cprog) USING 'BDC_CURSOR' 'PRPS-STUFE(01)'
-                                             CHANGING lt_bdcdata.
-
-    CALL TRANSACTION 'CJ02' USING lt_bdcdata
-                            OPTIONS FROM ls_options
-                            MESSAGES INTO lt_messages.
-*    LOOP AT lt_messages TRANSPORTING NO FIELDS
-*                        WHERE ( msgtyp = 'A' OR
-*                                msgtyp = 'E' OR
-*                                msgtyp = 'X').
-*      EXIT.
-*    ENDLOOP.
-    READ TABLE lt_messages TRANSPORTING NO FIELDS
-                           WITH KEY msgtyp = 'S'
-                                    msgid  = 'CJ'
-                                    msgnr  = '014'.
-    IF sy-subrc <> 0.
-      ev_error = abap_true.
-    ENDIF.
-    LOOP AT lt_messages INTO DATA(ls_messages).
-      CALL FUNCTION 'FORMAT_MESSAGE'
+    DO.
+      CASE sy-index.
+        WHEN 1.
+*1.A576 Plant/WBS/Material
+          SELECT SINGLE knumh FROM zta2d_a576 INTO @DATA(lv_knumh)
+                              WHERE kappl        EQ 'V'                 AND
+                                    kschl        EQ 'ZMRQ'              AND
+                                    werks        EQ @is_aufm-werks      AND
+                                    matnr        EQ @is_aufm-matnr      AND
+                                    zzps_psp_pnr EQ @is_aufm-ps_psp_pnr AND
+                                    datbi        GE @is_aufm-budat      AND
+                                    datab        LE @is_aufm-budat.
+        WHEN 2.
+*2.A579 Plant/Customer/WBS Element
+          SELECT SINGLE knumh FROM zta2d_a579 INTO @lv_knumh
+                              WHERE kappl        EQ 'V'                 AND
+                                    kschl        EQ 'ZMRQ'              AND
+                                    werks        EQ @is_aufm-werks      AND
+                                    kunnr        EQ @iv_kunnr           AND
+                                    zzps_psp_pnr EQ @is_aufm-ps_psp_pnr AND
+                                    datbi        GE @is_aufm-budat      AND
+                                    datab        LE @is_aufm-budat.
+        WHEN 3.
+*3.A142 Dependent on material
+          SELECT SINGLE knumh FROM a142 INTO @lv_knumh
+                              WHERE kappl EQ 'V'            AND
+                                    kschl EQ 'ZMRQ'         AND
+                                    werks EQ @is_aufm-werks AND
+                                    matnr EQ @is_aufm-matnr AND
+                                    datbi GE @is_aufm-budat AND
+                                    datab LE @is_aufm-budat.
+        WHEN 4.
+*4.A578 Plant/Customer
+          SELECT SINGLE knumh FROM zta2d_a578 INTO @lv_knumh
+                              WHERE kappl EQ 'V'            AND
+                                    kschl EQ 'ZMRQ'         AND
+                                    werks EQ @is_aufm-werks AND
+                                    kunnr EQ @iv_kunnr      AND
+                                    datbi GE @is_aufm-budat AND
+                                    datab LE @is_aufm-budat.
+        WHEN OTHERS.
+          EXIT.
+      ENDCASE.
+      CHECK NOT lv_knumh IS INITIAL.
+      SELECT SINGLE * FROM konp INTO @DATA(ls_konp)
+                      WHERE knumh    = @lv_knumh AND
+                            loevm_ko = @space.
+      CHECK sy-subrc = 0.
+      EXIT.
+    ENDDO.
+    CHECK NOT ls_konp IS INITIAL.
+    ev_kznep      = ls_konp-kznep.
+    ev_cond_found = abap_true.
+*Currency Conversions
+    IF is_aufm-waers <> ls_konp-konwa.
+      CALL FUNCTION 'CONVERT_TO_FOREIGN_CURRENCY'
         EXPORTING
-          id        = ls_messages-msgid
-          lang      = 'EN'
-          no        = ls_messages-msgnr
-          v1        = ls_messages-msgv1
-          v2        = ls_messages-msgv2
-          v3        = ls_messages-msgv3
-          v4        = ls_messages-msgv4
+          date             = is_aufm-budat
+          foreign_currency = is_aufm-waers
+          local_amount     = ls_konp-kbetr
+          local_currency   = ls_konp-konwa
         IMPORTING
-          msg       = lv_message
+          foreign_amount   = lv_kbetr
         EXCEPTIONS
-          not_found = 1
-          OTHERS    = 2.
+          no_rate_found    = 1
+          overflow         = 2
+          no_factors_found = 3
+          no_spread_found  = 4
+          derived_2_times  = 5
+          OTHERS           = 6.
       IF sy-subrc <> 0.
 * Implement suitable error handling here
       ENDIF.
-      IF lv_string IS INITIAL.
-        lv_string = lv_message.
-      ELSE.
-        CONCATENATE lv_string lv_message INTO lv_string SEPARATED BY ' / '.
+    ELSE.
+      lv_kbetr = ls_konp-kbetr.
+    ENDIF.
+*UOM Conversions
+    IF is_aufm-meins <> ls_konp-kmein.
+      lv_menge = ls_konp-kpein.
+      CALL FUNCTION 'MATERIAL_UNIT_CONVERSION'
+        EXPORTING
+          input                = lv_menge
+          kzmeinh              = 'X'
+          matnr                = is_aufm-matnr
+          meinh                = ls_konp-kmein
+          meins                = is_aufm-meins
+        IMPORTING
+          output               = lv_menge
+        EXCEPTIONS
+          conversion_not_found = 1
+          input_invalid        = 2
+          material_not_found   = 3
+          meinh_not_found      = 4
+          meins_missing        = 5
+          no_meinh             = 6
+          output_invalid       = 7
+          overflow             = 8
+          OTHERS               = 9.
+      IF sy-subrc <> 0.
+* Implement suitable error handling here
       ENDIF.
-*Do NOT Log data in case of NO change in Billing Plan
-      IF ls_messages-msgid = 'CJ' AND
-         ls_messages-msgnr = '221'.
-        ev_error = abap_true.
-      ENDIF.
-    ENDLOOP.
-    ev_message = lv_string.
+    ELSE.
+      lv_menge = ls_konp-kpein.
+    ENDIF.
+    ev_amount = lv_kbetr / lv_menge.
 
   ENDMETHOD.
