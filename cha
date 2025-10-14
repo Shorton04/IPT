@@ -1,10 +1,3 @@
-{
-  "CMX_MaintOrder_Floc": "735-MP330A2WT0026_IF",
-  "CMX_MaintOrder_OperationNum": "000035215282_0010",
-  "Code0001_CalibratedPassed": "true"
-}
-
-
 FUNCTION z_in_cmx_calib_result.
 *"--------------------------------------------------------------------
 *"*"Local Interface:
@@ -18,20 +11,22 @@ FUNCTION z_in_cmx_calib_result.
   DATA: ls_payload TYPE zcmx_calib_result,
         lv_order   TYPE aufnr,
         lv_vornr   TYPE vornr,
-        lv_json    TYPE string. " <-- Add this line
+        lv_json    TYPE string,
+        lv_qmnum   TYPE qmnum,
+        ls_qmma    TYPE qmma.
 
   TRY.
-      " 🔹 Convert to string first (important!)
+      " Convert to string
       lv_json = iv_json_payload.
 
-      " 🔹 Now parse JSON
+      " Parse JSON into structure
       /ui2/cl_json=>deserialize(
         EXPORTING
           json = lv_json
         CHANGING
           data = ls_payload ).
 
-      " 🔹 Split order and operation (e.g. 000035215282_0010)
+      " Split order and operation
       SPLIT ls_payload-cmx_maintorder_operationnum
         AT '_' INTO lv_order lv_vornr.
 
@@ -41,14 +36,39 @@ FUNCTION z_in_cmx_calib_result.
         RETURN.
       ENDIF.
 
-      " 🔹 Dummy update simulation
-      WRITE: / 'Order:', lv_order, 'Operation:', lv_vornr.
+      " Find notification number for the order
+      SELECT SINGLE qmnum FROM afih
+        WHERE aufnr = @lv_order
+        INTO @lv_qmnum.
 
-      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
-        EXPORTING wait = 'X'.
+      IF sy-subrc <> 0.
+        ev_status  = 'ERROR'.
+        ev_message = |No notification found for order { lv_order }|.
+        RETURN.
+      ENDIF.
 
-      ev_status  = 'SUCCESS'.
-      ev_message = |Calibration data for order { lv_order } processed.|.
+      " Update QMMA (e.g., certificate text)
+      SELECT SINGLE * FROM qmma
+        WHERE qmnum = @lv_qmnum
+          AND manum = @lv_vornr
+        INTO @ls_qmma.
+
+      IF sy-subrc = 0.
+        ls_qmma-matxt = ls_payload-a002_certificate_number.
+        ls_qmma-aenam = sy-uname.
+        ls_qmma-aedat = sy-datum.
+        ls_qmma-aezeit = sy-uzeit.
+
+        MODIFY qmma FROM ls_qmma.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          EXPORTING wait = 'X'.
+
+        ev_status  = 'SUCCESS'.
+        ev_message = |QMMA updated for order { lv_order } with certificate { ls_payload-a002_certificate_number }|.
+      ELSE.
+        ev_status  = 'ERROR'.
+        ev_message = |No QMMA record found for order { lv_order } operation { lv_vornr }|.
+      ENDIF.
 
     CATCH cx_root INTO DATA(lx_err).
       ev_status  = 'ERROR'.
