@@ -1,3 +1,3 @@
-# IPT
- 
-I checked both WBS elements — CM.000037.0000.00.1 and CM.000037, and both have the same company code ZX99. Because of that, the program didn’t trigger the FX translation logic. The current logic only applies FX when it detects an Intercompany flow (different company codes). Since both sides use the same company code, there’s no condition to handle same-company FX, which is why the object shows 120 USD while the posting stayed at 100 USD.
+After checking the logic, the reason why the OBJ amount shows 120 USD while the Posting remains 100 USD is because both WBS elements — CM.000037 and CM.000037.0000.00.1 — belong to the same company code (ZX99).
+The FX (foreign exchange) translation logic is only triggered inside the check_intcomp_scenario method when there’s an Intercompany flow (meaning different company codes).
+Since both have the same company code, the FX logic is skipped, and there’s currently no existing condition in the code to apply FX for same-company scenarios.
