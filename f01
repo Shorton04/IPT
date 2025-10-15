@@ -1,265 +1,300 @@
-*&---------------------------------------------------------------------*
-*& Report  ZK_REVENUE_RECOGNITION_CONSMAT
-*&---------------------------------------------------------------------*
-REPORT zk_revenue_recognition_consmat.
+  METHOD zif_rfw_view_alv~handle_custom_button.
 
-TABLES:mara,afpo,rsapetdtl,prps,zkcgt_wbs_recog.
+    TYPES:BEGIN OF ts_data_log,
+            pspnr          TYPE ps_posnr,
+            werks          TYPE werks_d,
+            amount         TYPE wogxxx,
+            waers          TYPE waers,
+            amount_posting TYPE zkps_wogxxx,
+            waers_posting  TYPE zkps_waers,
+            message        TYPE bapi_msg,
+          END OF ts_data_log.
 
-DATA:go_controller TYPE REF TO zcl_rfw_controller,
-     go_model_view TYPE REF TO zcl_k_revenue_recog_consmat,
-     gs_parameter  TYPE zcl_k_revenue_recog_consmat=>ts_parameter,
-     ls_bdcdata    TYPE bdcdata,
-*Selection Screen Values
-     lr_psphi      TYPE RANGE OF prps-psphi,
-     lr_pspnr      TYPE RANGE OF prps-pspnr,
-     lr_werks      TYPE RANGE OF afpo-dwerk,
-     lr_charg      TYPE RANGE OF afpo-charg,
-     lr_matnr      TYPE RANGE OF mara-matnr,
-     lr_mtart      TYPE RANGE OF mara-mtart,
-     lr_exdate     TYPE RANGE OF rsapetdtl-extraction_date,
-     lr_amtsr      TYPE RANGE OF zkcgt_wbs_recog-amount_source,
-     lr_ernam      TYPE RANGE OF zkcgt_wbs_recog-ernam,
-     lr_erdat      TYPE RANGE OF zkcgt_wbs_recog-erdat,
-     lr_status     TYPE RANGE OF zkcgt_wbs_recog-status,
-     lv_batrel     TYPE flag.
+    DATA:lt_result   TYPE STANDARD TABLE OF ts_result,
+         lt_data     TYPE STANDARD TABLE OF zkcgt_wbs_recog,
+         lt_data_tot TYPE STANDARD TABLE OF zkcgt_wbs_recog,
+         lt_data_log TYPE STANDARD TABLE OF ts_data_log,
+         lt_names    TYPE STANDARD TABLE OF zzs_alv_popup_names,
+         lt_fieldcat TYPE slis_t_fieldcat_alv,
+         ls_data_log TYPE ts_data_log,
+         ls_names    TYPE zzs_alv_popup_names,
+         ls_data     TYPE zkcgt_wbs_recog,
+         ls_prps_exp TYPE prps,
+         lv_source   TYPE zkcgt_amt_source,
+         lv_amount   TYPE wogxxx,
+         lv_error    TYPE flag,
+         lv_choice   TYPE flag.
 
-*---------------------------------------------------------------------*
-*                 Selection-Screen Declaration                        *
-*---------------------------------------------------------------------*
-SELECTION-SCREEN:BEGIN OF SCREEN 0100 AS SUBSCREEN,
-                 BEGIN OF BLOCK b1 WITH FRAME TITLE text-002.
-PARAMETERS:p_rb1 RADIOBUTTON GROUP rg1 DEFAULT 'X' USER-COMMAND rec,
-           p_rb2 RADIOBUTTON GROUP rg1,
-           p_rb3 RADIOBUTTON GROUP rg1.
-SELECTION-SCREEN:END OF BLOCK b1,
-                 BEGIN OF BLOCK b2 WITH FRAME TITLE text-001.
-SELECT-OPTIONS:r_psphi  FOR prps-psphi MODIF ID m2,
-               r_npspnr FOR prps-pspnr MODIF ID m3,
-               r_pspnr  FOR prps-pspnr MODIF ID m4,
-               r_werks  FOR afpo-dwerk,
-               r_charg  FOR afpo-charg MODIF ID m5,
-               r_matnr  FOR mara-matnr MODIF ID m5,
-               r_mtart  FOR mara-mtart DEFAULT 'ROH' MODIF ID m1,
-               r_exdate FOR rsapetdtl-extraction_date
-                        NO INTERVALS NO-EXTENSION MODIF ID m1,
-               r_amtsr  FOR zkcgt_wbs_recog-amount_source MODIF ID m3,
-               r_ernam  FOR zkcgt_wbs_recog-ernam  MODIF ID m3,
-               r_erdat  FOR zkcgt_wbs_recog-erdat  MODIF ID m3,
-               r_status FOR zkcgt_wbs_recog-status MODIF ID m3
-                        DEFAULT space.
-PARAMETERS p_batrel TYPE flag DEFAULT 'X' MODIF ID m1.
-SELECTION-SCREEN:END OF BLOCK b2,
-                 END OF SCREEN 0100.
-*---------------------------------------------------------------------*
-*                         INITIALIZATION                              *
-*---------------------------------------------------------------------*
-INITIALIZATION.
-*Set Defaults
-  PERFORM init_data.
+    CHECK NOT ct_result IS INITIAL.
 
-  CREATE OBJECT go_model_view.
-  CALL FUNCTION 'ZRFW_CONTROLLER_M01_V01_L02'
-    EXPORTING
-      iv_parameter_struct_name = 'ZCL_K_REVENUE_RECOG_CONSMAT=>TS_PARAMETER'
-      iv_result_struct_name    = 'ZCL_K_REVENUE_RECOG_CONSMAT=>TS_RESULT'
-      io_view_report           = go_model_view
-      io_view_alv              = go_model_view
-      io_model_selection       = go_model_view
-      iv_report_id             = sy-repid
-      iv_parameter_subscr_id   = '0100'
-    IMPORTING
-      eo_controller            = go_controller.
-  ASSERT go_controller IS BOUND.
-*---------------------------------------------------------------------*
-*                     AT SELECTION-SCREEN                             *
-*---------------------------------------------------------------------*
-AT SELECTION-SCREEN OUTPUT.
-  PERFORM modify_screen.
+    lt_result = ct_result.
 
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter( CHANGING cs_parameter = gs_parameter ).
-    go_controller->on_selection_screen_output( CHANGING cs_parameter = gs_parameter ).
-    go_controller->copy_parameter_to_option( EXPORTING is_parameter = gs_parameter ).
-  ENDIF.
+*WBS Details
+    SELECT a~pspnr,a~objnr,a~pbukr,a~abgsl,b~waers
+                                   INTO TABLE @DATA(lt_prps)
+                                   FROM prps AS a INNER JOIN t001 AS b
+                                   ON a~pbukr = b~bukrs
+                                   FOR ALL ENTRIES IN @lt_result
+                                   WHERE a~pspnr = @lt_result-pspnr_wbs OR
+                                         a~pspnr = @lt_result-pspnr_new.
 
-AT SELECTION-SCREEN.
-  PERFORM validate_data.
-
-  IF go_controller IS BOUND.
-    go_controller->copy_option_to_parameter( CHANGING cs_parameter = gs_parameter ).
-    go_controller->on_selection_screen( CHANGING cs_parameter = gs_parameter ).
-    go_controller->copy_parameter_to_option( EXPORTING is_parameter = gs_parameter ).
-  ENDIF.
-*&---------------------------------------------------------------------*
-*&      Form  INIT_DATA
-*&---------------------------------------------------------------------*
-FORM init_data.
-
-  DATA:lt_mtart TYPE STANDARD TABLE OF mara-mtart,
-       lv_datum TYPE datum.
-*Default Material Types as per Custom Lookup
-  CLEAR:r_mtart[],r_mtart.
-  SELECT SINGLE * FROM ztxca_param INTO @DATA(ls_param)
-                  WHERE kdef01 = 'ZKROHRECOG_MATTYPE_SELECTION' AND
-                        kval03    = 'MTART'                        AND
-                        pval01  = 'X'.
-  IF sy-subrc = 0.
-    IF NOT ls_param-pval02 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-pval02 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO DATA(ls_mtart)
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-    IF NOT ls_param-pval03 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-pval03 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO ls_mtart
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-    IF NOT ls_param-pval04 IS INITIAL.
-      CLEAR lt_mtart.
-      SPLIT ls_param-pval04 AT ',' INTO TABLE lt_mtart.
-      LOOP AT lt_mtart INTO ls_mtart
-                       WHERE table_line IS NOT INITIAL.
-        r_mtart-sign   = 'I'.
-        r_mtart-option = 'EQ'.
-        r_mtart-low    = ls_mtart.
-        APPEND r_mtart.
-      ENDLOOP.
-    ENDIF.
-  ENDIF.
-
-*Set Month end Date as default based on Current Date
-  CLEAR:r_exdate[],r_exdate.
-  lv_datum = sy-datum.
-  CALL FUNCTION 'RP_LAST_DAY_OF_MONTHS'
-    EXPORTING
-      day_in            = lv_datum
-    IMPORTING
-      last_day_of_month = lv_datum
-    EXCEPTIONS
-      day_in_no_date    = 1
-      OTHERS            = 2.
-  IF sy-subrc = 0.
-    r_exdate-sign   = 'I'.
-    r_exdate-option = 'LE'.
-    r_exdate-low    = lv_datum.
-    APPEND r_exdate.CLEAR r_exdate.
-  ENDIF.
-
-*Capture Default Values
-  lr_psphi  = r_psphi[].
-  lr_pspnr  = r_pspnr[].
-  lr_werks  = r_werks[].
-  lr_charg  = r_charg[].
-  lr_matnr  = r_matnr[].
-  lr_mtart  = r_mtart[].
-  lr_exdate = r_exdate[].
-  lr_amtsr  = r_amtsr[].
-  lr_ernam  = r_ernam[].
-  lr_erdat  = r_erdat[].
-  lr_status = r_status[].
-  lv_batrel = p_batrel.
-
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  VALIDATE_DATA
-*&---------------------------------------------------------------------*
-FORM validate_data.
-
-*Check for Mandatory Fields
-  CASE sy-ucomm.
-    WHEN 'EXECUTE'.
-      CASE abap_true.
-        WHEN p_rb1.
-          IF r_werks[] IS INITIAL.
-            MESSAGE 'Please Maintain Plant' TYPE 'E'.
+    CASE iv_ucomm.
+      WHEN 'AUTO'.
+        lv_source = 'B'.
+        LOOP AT lt_result INTO DATA(ls_result)
+                          WHERE pspnr_wbs IS NOT INITIAL.
+          READ TABLE mt_mcha INTO DATA(ls_mcha)
+                             WITH KEY index = ls_result-main_index.
+*Consider Split based on Top Level WBS/Material/Batch combination
+          READ TABLE lt_result INTO DATA(ls_result_t)
+                               WITH KEY main_index   = ls_result-main_index
+                                        record_index = '2'.
+*Check for Batch Release Status
+          SELECT SINGLE COUNT(*) FROM qmat
+                                 WHERE art   IN @mrt_art       AND
+                                       matnr EQ @ls_mcha-matnr AND
+                                       werks EQ @ls_mcha-werks AND
+                                       aktiv EQ 'X'.
+          IF sy-subrc = 0.
+            SELECT SINGLE prueflos FROM qals INTO @DATA(lv_prueflos)
+                                   WHERE werk  = @ls_mcha-werks     AND
+                                         aufnr = @ls_result_t-aufnr AND
+                                         matnr = @ls_mcha-matnr     AND
+                                         charg = @ls_mcha-charg.
+            IF NOT lv_prueflos IS INITIAL.
+              SELECT SINGLE vdatum FROM qave INTO @DATA(lv_vdatum)
+                                   WHERE prueflos = @lv_prueflos.
+              IF NOT lv_vdatum IS INITIAL.
+                DATA(lv_rel_allowed) = abap_true.
+              ENDIF.
+            ENDIF.
+          ELSE.
+            lv_rel_allowed = abap_true.
           ENDIF.
-          IF r_charg[] IS INITIAL.
-            MESSAGE 'Please Maintain Batch' TYPE 'E'.
+          IF NOT lv_rel_allowed IS INITIAL.
+*WBS RA-Key and Company Code Currency
+            READ TABLE lt_prps INTO DATA(ls_prps)
+                               WITH KEY pspnr = ls_result-pspnr_wbs.
+            IF ls_prps-abgsl IN mrt_abgsl.
+*Check for Intercompany Scenario based on Parent WBS
+              check_intcomp_scenario( EXPORTING is_result  = ls_result
+                                                iv_objnr   = ls_prps-objnr
+                                                iv_waers   = ls_prps-waers
+                                                iv_source  = lv_source
+                                      IMPORTING ev_pspnr   = ls_data-pspnr
+                                                ev_amount  = ls_data-amount_posting
+                                                ev_waers   = ls_data-waers_posting ).
+              ls_data-pspnr_new = ls_result-pspnr_wbs.
+              ls_data-matnr     = ls_result_t-matnr.
+              ls_data-werks     = ls_result-werks.
+              ls_data-charg     = ls_result_t-charg.
+              ls_data-amount    = ls_result-recog_amt.
+              ls_data-waers     = ls_prps-waers.
+              COLLECT ls_data INTO lt_data.
+            ENDIF.
           ENDIF.
-        WHEN p_rb2.
-          IF r_psphi[] IS INITIAL AND
-             r_pspnr[] IS INITIAL.
-            MESSAGE 'Please Maintain either Project or WBS' TYPE 'E'.
-          ENDIF.
-      ENDCASE.
-    WHEN 'REC'.
-      r_psphi[]  = lr_psphi[].
-      r_pspnr[]  = lr_pspnr[].
-      r_werks[]  = lr_werks[].
-      r_charg[]  = lr_charg[].
-      r_matnr[]  = lr_matnr[].
-      r_mtart[]  = lr_mtart[].
-      r_exdate[] = lr_exdate[].
-      r_amtsr[]  = lr_amtsr[].
-      r_ernam[]  = lr_ernam[].
-      r_erdat[]  = lr_erdat[].
-      r_status[] = lr_status[].
-      p_batrel   = lv_batrel.
-  ENDCASE.
+          CLEAR:ls_data,ls_result_t,ls_prps,ls_mcha,lv_vdatum,
+                lv_rel_allowed,lv_prueflos.
+        ENDLOOP.
+      WHEN 'MANUAL'.
+        lv_source = 'T'.
+        LOOP AT lt_result ASSIGNING FIELD-SYMBOL(<fs_result>)
+                          WHERE pspnr_wbs IS NOT INITIAL.
+*WBS RA-Key and Company Code Currency
+          CLEAR ls_prps.
+          READ TABLE lt_prps INTO ls_prps
+                             WITH KEY pspnr = <fs_result>-pspnr_new.
+          CHECK ls_prps-abgsl IN mrt_abgsl.
+*Check for Intercompany Scenario based on Parent WBS
+          check_intcomp_scenario( EXPORTING is_result  = <fs_result>
+                                            iv_objnr   = ls_prps-objnr
+                                            iv_waers   = ls_prps-waers
+                                            iv_source  = lv_source
+                                  IMPORTING ev_pspnr   = ls_data-pspnr
+                                            ev_amount  = ls_data-amount_posting
+                                            ev_waers   = ls_data-waers_posting ).
+          ls_data-pspnr_new = <fs_result>-pspnr_new.
+          ls_data-werks     = <fs_result>-werks.
+          ls_data-amount    = <fs_result>-amount.
+          ls_data-waers     = <fs_result>-waers.
+          ls_data-trueuptxt = <fs_result>-trueuptxt.
+*Push Updated values back to Report Output
+          <fs_result>-amount_posting = ls_data-amount_posting.
+          <fs_result>-waers_posting  = ls_data-waers_posting.
 
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  MODIFY_SCREEN
-*&---------------------------------------------------------------------*
-FORM modify_screen.
-
-  LOOP AT SCREEN.
-    CASE screen-group1.
-      WHEN 'M1'.
-        IF p_rb1 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M2'.
-        IF p_rb2 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M3'.
-        IF p_rb3 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M4'.
-        IF NOT p_rb1 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
-      WHEN 'M5'.
-        IF NOT p_rb2 IS INITIAL.
-          screen-active = 0.
-        ENDIF.
+          COLLECT ls_data INTO lt_data.
+          CLEAR ls_data.
+        ENDLOOP.
     ENDCASE.
-    MODIFY SCREEN.
-  ENDLOOP.
+*Update Database with the latest status
+    IF NOT lt_data IS INITIAL.
+      LOOP AT lt_data ASSIGNING FIELD-SYMBOL(<fs_data>).
+        <fs_data>-amount_source = lv_source.
+        GET TIME STAMP FIELD <fs_data>-timestamp.
+        <fs_data>-ernam = sy-uname.
+        <fs_data>-erdat = sy-datum.
+        <fs_data>-ctime = sy-uzeit.
+      ENDLOOP.
+*Existing Entries from Database
+      IF lv_source = 'B'.
+        SELECT * FROM zkcgt_wbs_recog INTO TABLE @DATA(lt_data_db)
+                                      FOR ALL ENTRIES IN @lt_data
+                                      WHERE pspnr = @lt_data-pspnr AND
+                                            matnr = @lt_data-matnr AND
+                                            werks = @lt_data-werks AND
+                                            charg = @lt_data-charg AND
+                                            amount_source = @lv_source AND
+                                            status = @space.
+        LOOP AT lt_data_db ASSIGNING <fs_data>.
+          <fs_data>-aenam  = sy-uname.
+          <fs_data>-aedat  = sy-datum.
+          <fs_data>-utime  = sy-uzeit.
+          <fs_data>-status = 'X'.
+        ENDLOOP.
+      ENDIF.
+      APPEND LINES OF lt_data TO lt_data_db.
+*Existing Entries from Database for Billing Plan Totals
+      SELECT * FROM zkcgt_wbs_recog INTO TABLE @DATA(lt_data_t)
+                                    FOR ALL ENTRIES IN @lt_data
+                                    WHERE pspnr = @lt_data-pspnr AND
+                                          status = @space.
+      LOOP AT lt_data_t ASSIGNING FIELD-SYMBOL(<fs_data_t>)
+                        WHERE pspnr_new IS INITIAL.
+        <fs_data_t>-pspnr_new = <fs_data_t>-pspnr.
+      ENDLOOP.
+      LOOP AT lt_data INTO ls_data.
+        IF lv_source = 'B'.
+          READ TABLE lt_data_t INTO DATA(ls_data_t)
+                       WITH KEY pspnr_new = ls_data-pspnr_new
+                                pspnr     = ls_data-pspnr
+                                matnr     = ls_data-matnr
+                                werks     = ls_data-werks
+                                charg     = ls_data-charg.
+          IF sy-subrc = 0.
+            ls_data_t-amount = ls_data-amount.
+            ls_data_t-waers  = ls_data-waers.
+            DELETE lt_data_t WHERE pspnr_new = ls_data-pspnr_new AND
+                                   pspnr     = ls_data-pspnr AND
+                                   matnr     = ls_data-matnr AND
+                                   werks     = ls_data-werks AND
+                                   charg     = ls_data-charg.
+          ELSE.
+*            ls_data_t-pspnr_new = ls_data-pspnr_new.
+            ls_data_t-pspnr     = ls_data-pspnr.
+*            ls_data_t-werks     = ls_data-werks.
+            ls_data_t-amount    = ls_data-amount.
+            ls_data_t-waers     = ls_data-waers.
+          ENDIF.
+        ELSE.
+*          ls_data_t-pspnr_new = ls_data-pspnr_new.
+          ls_data_t-pspnr     = ls_data-pspnr.
+*          ls_data_t-werks     = ls_data-werks.
+          ls_data_t-amount    = ls_data-amount.
+          ls_data_t-waers     = ls_data-waers.
+        ENDIF.
+*Posting Values
+        ls_data_t-amount_posting = ls_data-amount_posting.
+        ls_data_t-waers_posting  = ls_data-waers_posting.
 
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  BDC_DYNPRO
-*&---------------------------------------------------------------------*
-FORM bdc_dynpro USING iv_program iv_dynpro
-                CHANGING ct_bdcdata TYPE bdcdata_tab.
-  CLEAR ls_bdcdata.
-  ls_bdcdata-program  = iv_program.
-  ls_bdcdata-dynpro   = iv_dynpro.
-  ls_bdcdata-dynbegin = 'X'.
-  APPEND ls_bdcdata TO ct_bdcdata.
-ENDFORM.
-*&---------------------------------------------------------------------*
-*&      Form  BDC_DYNPRO
-*&---------------------------------------------------------------------*
-FORM bdc_field USING iv_fnam iv_fval
-               CHANGING ct_bdcdata TYPE bdcdata_tab.
-  CLEAR ls_bdcdata.
-  ls_bdcdata-fnam = iv_fnam.
-  WRITE iv_fval TO ls_bdcdata-fval LEFT-JUSTIFIED.
-  APPEND ls_bdcdata TO ct_bdcdata.
-ENDFORM.
+        CLEAR:ls_data_t-matnr,ls_data_t-charg,ls_data_t-amount_source,
+              ls_data_t-timestamp,ls_data_t-ernam,ls_data_t-erdat,
+              ls_data_t-ctime,ls_data_t-aenam,ls_data_t-aedat,
+              ls_data_t-utime,ls_data_t-status,ls_data_t-mandt,
+              ls_data_t-trueuptxt,ls_data_t-werks,ls_data_t-pspnr_new.
+
+        COLLECT ls_data_t INTO lt_data_tot.
+        CLEAR:ls_data_t,ls_data,lv_amount.
+      ENDLOOP.
+*Remaining Entries to be added to Billing Plan
+      LOOP AT lt_data_t INTO ls_data_t.
+        CLEAR:ls_data_t-matnr,ls_data_t-charg,ls_data_t-amount_source,
+              ls_data_t-timestamp,ls_data_t-ernam,ls_data_t-erdat,
+              ls_data_t-ctime,ls_data_t-aenam,ls_data_t-aedat,
+              ls_data_t-utime,ls_data_t-status,ls_data_t-mandt,
+              ls_data_t-trueuptxt,ls_data_t-pspnr_new,ls_data_t-werks.
+
+        COLLECT ls_data_t INTO lt_data_tot.
+      ENDLOOP.
+*Show popup with all details
+*Fieldcatalog
+      CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+        EXPORTING
+          i_program_name         = sy-repid
+          i_internal_tabname     = 'LT_DATA'
+          i_structure_name       = 'ZKCGT_WBS_RECOG'
+          i_inclname             = sy-repid
+        CHANGING
+          ct_fieldcat            = lt_fieldcat
+        EXCEPTIONS
+          inconsistent_interface = 1
+          program_error          = 2
+          OTHERS                 = 3.
+      IF sy-subrc <> 0.
+* Implement suitable error handling here
+      ENDIF.
+      lt_names = CORRESPONDING #( lt_fieldcat MAPPING fieldname = fieldname
+                                                      heading   = seltext_l ).
+      CALL FUNCTION 'ZLONZA_ALV_POPUP_TABLE'
+        EXPORTING
+          iv_start_col   = 25
+          iv_start_line  = 1
+          iv_end_col     = 150
+          iv_end_line    = 20
+          iv_title       = 'Update Details'
+          it_field_names = lt_names
+        IMPORTING
+          ev_choice      = lv_choice
+        CHANGING
+          it_table       = lt_data.
+      IF lv_choice IS INITIAL.
+*Update Billing Plan
+        LOOP AT lt_data_tot INTO ls_data.
+          CLEAR:ls_data_log,lv_error.
+          MOVE-CORRESPONDING ls_data TO ls_data_log.
+          billing_plan_update( EXPORTING is_data    = ls_data
+                               IMPORTING ev_error   = lv_error
+                                         ev_message = ls_data_log-message ).
+          IF lv_error IS INITIAL.
+            LOOP AT lt_data_db INTO DATA(ls_data_db)
+                               WHERE pspnr = ls_data-pspnr.
+              MODIFY zkcgt_wbs_recog FROM ls_data_db.
+            ENDLOOP.
+          ENDIF.
+          APPEND ls_data_log TO lt_data_log.
+        ENDLOOP.
+        IF sy-subrc = 0.
+          CALL FUNCTION 'ZLONZA_ALV_POPUP_TABLE'
+            EXPORTING
+              iv_start_col   = 25
+              iv_start_line  = 1
+              iv_end_col     = 150
+              iv_end_line    = 20
+              iv_title       = 'Log Details'
+              it_field_names = lt_names
+            IMPORTING
+              ev_choice      = lv_choice
+            CHANGING
+              it_table       = lt_data_log.
+*Re-Select Result
+          IF lv_source = 'T'.
+            REFRESH:lt_result,ct_result.
+            CALL METHOD me->zif_rfw_model_selection~select_result
+              EXPORTING
+                io_controller = io_controller
+                io_progress   = io_progress
+                is_parameter  = ms_parameter
+                iv_max_hits   = ''
+              IMPORTING
+                et_result     = lt_result.
+            ct_result = lt_result.
+            cv_after_custom_button = zif_rfw_view_alv~gc_acb_refresh_layout.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      MESSAGE 'No relevant data for updation' TYPE 'I'.
+    ENDIF.
+
+    ct_result = lt_result.
+
+  ENDMETHOD.
