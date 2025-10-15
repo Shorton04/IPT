@@ -1,2 +1,3 @@
 # IPT
  
+I checked both WBS elements — CM.000037.0000.00.1 and CM.000037, and both have the same company code ZX99. Because of that, the program didn’t trigger the FX translation logic. The current logic only applies FX when it detects an Intercompany flow (different company codes). Since both sides use the same company code, there’s no condition to handle same-company FX, which is why the object shows 120 USD while the posting stayed at 100 USD.
