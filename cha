@@ -1,66 +1,1871 @@
-  METHOD zif_rfw_view_alv~get_alv_layout_attribute.
+  METHOD zif_rfw_model_selection~select_result.
 
-    DATA:ls_custom_button TYPE zif_rfw_view_alv=>ts_custom_button,
-         lv_lookup_name   TYPE zlookup_name.
+    TYPES:BEGIN OF ts_prps,
+            pspnr   TYPE ps_posnr,
+            posid   TYPE ps_posid,
+            post1   TYPE ps_post1,
+            objnr   TYPE j_objnr,
+            psphi   TYPE ps_psphi,
+            pbukr   TYPE ps_pbukr,
+            pkokr   TYPE ps_pkokr,
+            kzbws   TYPE kzbws,
+            zcustom TYPE kunag,
+          END OF ts_prps,
+          BEGIN OF ts_parent,
+            aufnr TYPE aufk-aufnr,
+            charg TYPE afpo-charg,
+          END OF ts_parent.
 
-    FIELD-SYMBOLS <fs_parameter>  TYPE ts_parameter.
+    DATA:lt_result       TYPE STANDARD TABLE OF ts_result,
+         lt_result_c     TYPE STANDARD TABLE OF ts_result,
+         lt_result_r     TYPE STANDARD TABLE OF ts_result,
+         lt_result_p     TYPE STANDARD TABLE OF ts_result,
+         lt_result_prop  TYPE STANDARD TABLE OF ts_result,
+         lt_result_exp   TYPE STANDARD TABLE OF ts_result,
+         lt_shadow       TYPE STANDARD TABLE OF chvwshadow,
+         lt_shadow_rev   TYPE STANDARD TABLE OF chvwshadow,
+         lt_bwart        TYPE STANDARD TABLE OF mseg-bwart,
+         lt_mtart        TYPE STANDARD TABLE OF mara-mtart,
+         lt_art          TYPE STANDARD TABLE OF qmat-art,
+         lt_bklas        TYPE STANDARD TABLE OF mbew-bklas,
+         lt_abgsl        TYPE STANDARD TABLE OF prps-abgsl,
+         lt_prps         TYPE STANDARD TABLE OF ts_prps,
+         lt_tprps        TYPE STANDARD TABLE OF ts_prps,
+         lt_parent       TYPE STANDARD TABLE OF ts_parent,
+         lt_parent_exp   TYPE STANDARD TABLE OF ts_parent,
+         lr_aufnr        TYPE RANGE OF mseg-aufnr,
+         lr_charg        TYPE RANGE OF mseg-charg,
+         lr_bwart        TYPE RANGE OF mseg-bwart,
+         lr_bwart_gr     TYPE RANGE OF mseg-bwart,
+         lr_bwart_gi     TYPE RANGE OF mseg-bwart,
+         lr_mtart_del    TYPE RANGE OF mara-mtart,
+         lr_kstar        TYPE RANGE OF covp-kstar,
+         lr_art          TYPE RANGE OF qmat-art,
+         lrs_art         LIKE LINE OF lr_art,
+         lrs_bwart       LIKE LINE OF lr_bwart,
+         lrs_aufnr       LIKE LINE OF lr_aufnr,
+         lrs_charg       LIKE LINE OF lr_charg,
+         lrs_mtart       LIKE LINE OF lr_mtart_del,
+         lrs_abgsl       LIKE LINE OF mrt_abgsl,
+         lr_bklas        TYPE RANGE OF mbew-bklas,
+         lrs_bklas       LIKE LINE OF lr_bklas,
+         ls_result       TYPE ts_result,
+         ls_result_prop  TYPE ts_result,
+         ls_shadow_top   TYPE chvwshadow,
+         ls_dfchvw       TYPE dfchvw,
+         ls_mcha_top     TYPE ts_mcha,
+         ls_parent       TYPE ts_parent,
+         lv_ctype        TYPE seu_type,
+         lv_rate         TYPE tb_rate,  "ukurs_curr,
+         lv_rate_mul     TYPE tb_rate,
+         lv_rate_mul_p   TYPE tb_rate,
+         lv_stprs_std    TYPE stprs,
+         lv_peinh_std    TYPE peinh,
+         lv_stprs_act    TYPE stprs,
+         lv_peinh_act    TYPE peinh,
+         lv_waers_act    TYPE waers,
+         lv_prd_cost     TYPE wogxxx,
+         lv_rev_cost     TYPE wogxxx,
+         lv_prod_price   TYPE kbetr_kond,
+         lv_markup       TYPE kbetr_kond,
+         lv_kznep        TYPE kznep,
+         lv_bklas        TYPE mbew-bklas,
+         lv_cond_found   TYPE flag,
+         lv_resb_flag    TYPE flag,
+         lv_poper        TYPE poper,
+         lv_auth_error   TYPE flag,
+         lv_main_index   TYPE i,
+         lv_record_index TYPE i,
+         lv_limit        TYPE i,
+         lv_count        TYPE i,
+         lv_mrec_count   TYPE p DECIMALS 5.
+
+    FIELD-SYMBOLS <fs_parameter> TYPE ts_parameter.
+
+    CLEAR:mt_mcha,mrt_abgsl,mrt_art,ms_parameter.
 
     ASSIGN is_parameter TO <fs_parameter>.
-    ASSERT <fs_parameter> IS ASSIGNED.
-
-    cv_variant_save_mode = zif_rfw_view_alv=>gc_variant_save_mode_global.
-*Exclude function buttons
-    CLEAR et_exclude_button.
-    APPEND:cl_gui_alv_grid=>mc_fc_loc_undo       TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_append_row TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_insert_row TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_delete_row TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_copy       TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_copy_row   TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_cut        TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_move_row   TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_paste      TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_loc_paste_new_row TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_average        TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_graph          TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_info           TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_refresh        TO et_exclude_button,
-           cl_gui_alv_grid=>mc_fc_check          TO et_exclude_button.
-*Do NOT Display Manage Layout option for Options 2 & 3
-    IF <fs_parameter>-p_rb1 IS INITIAL.
-      APPEND cl_gui_alv_grid=>mc_mb_variant TO et_exclude_button.
+    ms_parameter = <fs_parameter>.
+*Logic to be applied based on RA Key
+    SELECT SINGLE * FROM zvv_param INTO @DATA(ls_param)
+                    WHERE lookup_name EQ 'ZK_CGT_RA_KKA2_EXIT' AND
+                          free_key    EQ 'ABGSL'               AND
+                          indicator1  EQ @abap_true.
+    IF sy-subrc = 0.
+      IF NOT ls_param-value1 IS INITIAL.
+        SPLIT ls_param-value1 AT ',' INTO TABLE lt_abgsl.
+        LOOP AT lt_abgsl INTO DATA(ls_abgsl)
+                         WHERE table_line IS NOT INITIAL.
+          lrs_abgsl-sign   = 'I'.
+          lrs_abgsl-option = 'EQ'.
+          lrs_abgsl-low    = ls_abgsl.
+          APPEND lrs_abgsl TO mrt_abgsl.
+        ENDLOOP.
+        CLEAR:lt_abgsl,lrs_abgsl.
+      ENDIF.
+      IF NOT ls_param-value2 IS INITIAL.
+        SPLIT ls_param-value2 AT ',' INTO TABLE lt_abgsl.
+        LOOP AT lt_abgsl INTO ls_abgsl
+                         WHERE table_line IS NOT INITIAL.
+          lrs_abgsl-sign   = 'I'.
+          lrs_abgsl-option = 'EQ'.
+          lrs_abgsl-low    = ls_abgsl.
+          APPEND lrs_abgsl TO mrt_abgsl.
+        ENDLOOP.
+        CLEAR:lt_abgsl,lrs_abgsl.
+      ENDIF.
+      IF NOT ls_param-value3 IS INITIAL.
+        SPLIT ls_param-value3 AT ',' INTO TABLE lt_abgsl.
+        LOOP AT lt_abgsl INTO ls_abgsl
+                         WHERE table_line IS NOT INITIAL.
+          lrs_abgsl-sign   = 'I'.
+          lrs_abgsl-option = 'EQ'.
+          lrs_abgsl-low    = ls_abgsl.
+          APPEND lrs_abgsl TO mrt_abgsl.
+        ENDLOOP.
+        CLEAR:lt_abgsl,lrs_abgsl.
+      ENDIF.
     ENDIF.
 
-    CLEAR ls_custom_button.
     CASE abap_true.
-      WHEN <fs_parameter>-p_rb1.  "Batch Production related
-        MOVE 'AUTO'         TO ls_custom_button-v_ucomm.
-        MOVE icon_bw_apd_db TO ls_custom_button-v_icon.
-        ls_custom_button-v_quickinfo = text-007.
-        ls_custom_button-v_text      = text-007.
-        APPEND ls_custom_button TO et_custom_button.
-      WHEN <fs_parameter>-p_rb2.  "True-up Cost Correction
-        MOVE 'MANUAL'        TO ls_custom_button-v_ucomm.
-        MOVE icon_write_file TO ls_custom_button-v_icon.
-        ls_custom_button-v_quickinfo = text-008.
-        ls_custom_button-v_text      = text-008.
-        APPEND ls_custom_button TO et_custom_button.
-      WHEN OTHERS.
+      WHEN <fs_parameter>-p_rb1.
+        SELECT matnr,werks,charg FROM mcha INTO TABLE @DATA(lt_mcha)
+                                 WHERE matnr IN @<fs_parameter>-r_matnr AND
+                                       werks IN @<fs_parameter>-r_werks AND
+                                       charg IN @<fs_parameter>-r_charg
+                                       ORDER BY PRIMARY KEY.
+
+        CHECK NOT lt_mcha IS INITIAL.
+*Check for the Maximum Limit on the No.of Records to be considered for Processing
+        SELECT SINGLE value1 FROM zvv_param INTO @DATA(lv_value1)
+                             WHERE lookup_name EQ 'ZKROHRECOG_LIMIT' AND
+                                   indicator1  EQ @abap_true.
+        lv_limit = lv_value1.
+        CHECK lv_limit > 0.
+        IF lines( lt_mcha ) > lv_limit.
+          MESSAGE e744(me) WITH lv_limit.
+        ENDIF.
+
+*Cost Element List based on entries from GS03 - Set Values
+        SELECT * FROM setleaf INTO TABLE @DATA(lt_set_values)
+                              WHERE setclass = '0000' AND
+                                    setname  = 'ZKROHRECOG_CE_LIST'.
+        IF NOT lt_set_values IS INITIAL.
+          lr_kstar = CORRESPONDING #( lt_set_values MAPPING sign   = valsign
+                                                            option = valoption
+                                                            low    = valfrom
+                                                            high   = valto ).
+          SORT lr_kstar.
+        ENDIF.
+
+*Consider ONLY specific Movement types for Goods Movement
+        SELECT * FROM zvv_param INTO TABLE @DATA(lt_param)
+                 WHERE lookup_name IN ('ZKROHRECOG_GR','ZKROHRECOG_GI') AND
+                       free_key    EQ 'BWART' AND
+                       indicator1  EQ @abap_true.
+        IF sy-subrc = 0.
+          CLEAR:lt_bwart,lr_bwart,lr_bwart_gr,lr_bwart_gi.
+          LOOP AT lt_param INTO ls_param.
+            IF NOT ls_param-value1 IS INITIAL.
+              SPLIT ls_param-value1 AT ',' INTO TABLE lt_bwart.
+              LOOP AT lt_bwart INTO DATA(ls_bwart)
+                               WHERE table_line IS NOT INITIAL.
+                lrs_bwart-sign   = 'I'.
+                lrs_bwart-option = 'EQ'.
+                lrs_bwart-low    = ls_bwart.
+                APPEND lrs_bwart TO lr_bwart.
+              ENDLOOP.
+              IF ls_param-lookup_name = 'ZKROHRECOG_GR'.
+                APPEND LINES OF lr_bwart TO lr_bwart_gr.
+              ELSE.
+                APPEND LINES OF lr_bwart TO lr_bwart_gi.
+              ENDIF.
+              CLEAR:lt_bwart,lr_bwart,lrs_bwart.
+            ENDIF.
+            IF NOT ls_param-value2 IS INITIAL.
+              SPLIT ls_param-value2 AT ',' INTO TABLE lt_bwart.
+              LOOP AT lt_bwart INTO ls_bwart
+                               WHERE table_line IS NOT INITIAL.
+                lrs_bwart-sign   = 'I'.
+                lrs_bwart-option = 'EQ'.
+                lrs_bwart-low    = ls_bwart.
+                APPEND lrs_bwart TO lr_bwart.
+              ENDLOOP.
+              IF ls_param-lookup_name = 'ZKROHRECOG_GR'.
+                APPEND LINES OF lr_bwart TO lr_bwart_gr.
+              ELSE.
+                APPEND LINES OF lr_bwart TO lr_bwart_gi.
+              ENDIF.
+              CLEAR:lt_bwart,lr_bwart,lrs_bwart.
+            ENDIF.
+            IF NOT ls_param-value3 IS INITIAL.
+              SPLIT ls_param-value3 AT ',' INTO TABLE lt_bwart.
+              LOOP AT lt_bwart INTO ls_bwart
+                               WHERE table_line IS NOT INITIAL.
+                lrs_bwart-sign   = 'I'.
+                lrs_bwart-option = 'EQ'.
+                lrs_bwart-low    = ls_bwart.
+                APPEND lrs_bwart TO lr_bwart.
+              ENDLOOP.
+              IF ls_param-lookup_name = 'ZKROHRECOG_GR'.
+                APPEND LINES OF lr_bwart TO lr_bwart_gr.
+              ELSE.
+                APPEND LINES OF lr_bwart TO lr_bwart_gi.
+              ENDIF.
+              CLEAR:lt_bwart,lr_bwart,lrs_bwart.
+            ENDIF.
+          ENDLOOP.
+          APPEND LINES OF:lr_bwart_gr TO lr_bwart,
+                          lr_bwart_gi TO lr_bwart.
+          SORT:lr_bwart,lr_bwart_gr,lr_bwart_gi.
+          DELETE ADJACENT DUPLICATES FROM:lr_bwart    COMPARING ALL FIELDS,
+                                          lr_bwart_gr COMPARING ALL FIELDS,
+                                          lr_bwart_gi COMPARING ALL FIELDS.
+        ENDIF.
+
+*Material Types as per Custom Lookup for Exclusions to
+*Set Amount to be Recognized (Incl.Markup) as 0
+        CLEAR:lr_mtart_del,lrs_mtart,ls_param.
+        SELECT SINGLE * FROM zvv_param INTO @ls_param
+                        WHERE lookup_name = 'ZKROHRECOG_MATTYPE_DELETION' AND
+                              free_key    = 'MTART'                       AND
+                              indicator1  = 'X'.
+        IF sy-subrc = 0.
+          IF NOT ls_param-value1 IS INITIAL.
+            CLEAR lt_mtart.
+            SPLIT ls_param-value1 AT ',' INTO TABLE lt_mtart.
+            LOOP AT lt_mtart INTO DATA(ls_mtart)
+                             WHERE table_line IS NOT INITIAL.
+              lrs_mtart-sign   = 'E'.
+              lrs_mtart-option = 'EQ'.
+              lrs_mtart-low    = ls_mtart.
+              APPEND lrs_mtart TO lr_mtart_del.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value2 IS INITIAL.
+            CLEAR lt_mtart.
+            SPLIT ls_param-value2 AT ',' INTO TABLE lt_mtart.
+            LOOP AT lt_mtart INTO ls_mtart
+                             WHERE table_line IS NOT INITIAL.
+              lrs_mtart-sign   = 'E'.
+              lrs_mtart-option = 'EQ'.
+              lrs_mtart-low    = ls_mtart.
+              APPEND lrs_mtart TO lr_mtart_del.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value3 IS INITIAL.
+            CLEAR lt_mtart.
+            SPLIT ls_param-value3 AT ',' INTO TABLE lt_mtart.
+            LOOP AT lt_mtart INTO ls_mtart
+                             WHERE table_line IS NOT INITIAL.
+              lrs_mtart-sign   = 'E'.
+              lrs_mtart-option = 'EQ'.
+              lrs_mtart-low    = ls_mtart.
+              APPEND lrs_mtart TO lr_mtart_del.
+            ENDLOOP.
+          ENDIF.
+          SORT lr_mtart_del.
+          DELETE ADJACENT DUPLICATES FROM lr_mtart_del COMPARING ALL FIELDS.
+        ENDIF.
+
+*Check to be done in table QMAT, accessing with plant/material, AKTIVE = ‘X’ and
+*ART in ZVV_PARAM ‘ZKROHRECOG_QM_REL_ID’ initially valued as ’04’ and ‘Q22’ variable
+        CLEAR:lr_art,lrs_art,ls_param.
+        SELECT SINGLE * FROM zvv_param INTO @ls_param
+                        WHERE lookup_name = 'ZKROHRECOG_QM_REL_ID' AND
+                              free_key    = 'ART'                  AND
+                              indicator1  = 'X'.
+        IF sy-subrc = 0.
+          IF NOT ls_param-value1 IS INITIAL.
+            CLEAR lt_art.
+            SPLIT ls_param-value1 AT ',' INTO TABLE lt_art.
+            LOOP AT lt_art INTO DATA(ls_art)
+                           WHERE table_line IS NOT INITIAL.
+              lrs_art-sign   = 'I'.
+              lrs_art-option = 'EQ'.
+              lrs_art-low    = ls_art.
+              APPEND lrs_art TO lr_art.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value2 IS INITIAL.
+            CLEAR lt_art.
+            SPLIT ls_param-value2 AT ',' INTO TABLE lt_art.
+            LOOP AT lt_art INTO ls_art
+                           WHERE table_line IS NOT INITIAL.
+              lrs_art-sign   = 'I'.
+              lrs_art-option = 'EQ'.
+              lrs_art-low    = ls_art.
+              APPEND lrs_art TO lr_art.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value3 IS INITIAL.
+            CLEAR lt_art.
+            SPLIT ls_param-value3 AT ',' INTO TABLE lt_art.
+            LOOP AT lt_art INTO ls_art
+                           WHERE table_line IS NOT INITIAL.
+              lrs_art-sign   = 'I'.
+              lrs_art-option = 'EQ'.
+              lrs_art-low    = ls_art.
+              APPEND lrs_art TO lr_art.
+            ENDLOOP.
+          ENDIF.
+          SORT lr_art.
+          DELETE ADJACENT DUPLICATES FROM lr_art COMPARING ALL FIELDS.
+          mrt_art = lr_art.
+        ENDIF.
+
+*Valuation Class for FERT and HALB purchase scenario as per Custom Lookup
+*Set Amount to be Recognized (Incl.Markup) as per ROH calculation
+        CLEAR:lr_bklas,lrs_bklas,ls_param.
+        SELECT SINGLE * FROM zvv_param INTO @ls_param
+                        WHERE lookup_name = 'ZKROHRECOG_VALCLASS_FERT' AND
+                              free_key    = 'BKLAS'                    AND
+                              indicator1  = 'X'.
+        IF sy-subrc = 0.
+          IF NOT ls_param-value1 IS INITIAL.
+            CLEAR lt_bklas.
+            SPLIT ls_param-value1 AT ',' INTO TABLE lt_bklas.
+            LOOP AT lt_bklas INTO DATA(ls_bklas)
+                             WHERE table_line IS NOT INITIAL.
+              lrs_bklas-sign   = 'I'.
+              lrs_bklas-option = 'EQ'.
+              lrs_bklas-low    = ls_bklas.
+              APPEND lrs_bklas TO lr_bklas.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value2 IS INITIAL.
+            CLEAR lt_bklas.
+            SPLIT ls_param-value2 AT ',' INTO TABLE lt_bklas.
+            LOOP AT lt_bklas INTO ls_bklas
+                             WHERE table_line IS NOT INITIAL.
+              lrs_bklas-sign   = 'I'.
+              lrs_bklas-option = 'EQ'.
+              lrs_bklas-low    = ls_bklas.
+              APPEND lrs_bklas TO lr_bklas.
+            ENDLOOP.
+          ENDIF.
+          IF NOT ls_param-value3 IS INITIAL.
+            CLEAR lt_bklas.
+            SPLIT ls_param-value3 AT ',' INTO TABLE lt_bklas.
+            LOOP AT lt_bklas INTO ls_bklas
+                             WHERE table_line IS NOT INITIAL.
+              lrs_bklas-sign   = 'I'.
+              lrs_bklas-option = 'EQ'.
+              lrs_bklas-low    = ls_bklas.
+              APPEND lrs_bklas TO lr_bklas.
+            ENDLOOP.
+          ENDIF.
+          SORT lr_bklas.
+          DELETE ADJACENT DUPLICATES FROM lr_bklas COMPARING ALL FIELDS.
+          mrt_bklas = lr_bklas.
+        ENDIF.
+
+*Control Parameters
+        ls_dfchvw-alstf = '00'.
+        ls_dfchvw-kznul = 'X'.
+        ls_dfchvw-trfpo = 'X'.
+        ls_dfchvw-exptp = 'T'.
+        ls_dfchvw-dsptp = 'L'.
+
+        CLEAR:lv_main_index,lv_record_index.
+        LOOP AT lt_mcha INTO DATA(ls_mcha).
+*Check for Valid Authorization
+          AUTHORITY-CHECK OBJECT 'M_MSEG_WMB'
+                              ID 'ACTVT' FIELD '03'
+                              ID 'WERKS' FIELD ls_mcha-werks.
+          IF sy-subrc <> 0.
+            DELETE lt_mcha WHERE werks = ls_mcha-werks.
+            lv_auth_error = abap_true.
+            CONTINUE.
+          ENDIF.
+*Get Full Information
+          CLEAR:lt_shadow,lt_shadow_rev,lt_result_c,lt_result_r,
+                lt_result_p,lv_record_index,ls_mcha_top,lr_aufnr.
+          CALL FUNCTION 'CHVW_EXPLODE_ALL'
+            EXPORTING
+              i_matnr            = ls_mcha-matnr
+              i_werks            = ls_mcha-werks
+              i_charg            = ls_mcha-charg
+              i_dfchvw           = ls_dfchvw
+              i_cust_sort        = 'X'
+              ctype              = lv_ctype
+            TABLES
+              t_shadow           = lt_shadow
+            EXCEPTIONS
+              invalid_input_data = 1
+              OTHERS             = 2.
+          IF sy-subrc <> 0.
+            CONTINUE.
+          ENDIF.
+
+          CHECK NOT lt_shadow IS INITIAL.
+
+          LOOP AT lt_shadow INTO DATA(ls_shadow).
+            INSERT ls_shadow INTO lt_shadow_rev INDEX 1.
+          ENDLOOP.
+          CLEAR ls_shadow.
+
+          DELETE lt_shadow_rev WHERE type = 'B'. "Purchase Order lines NOT relevant for Calculations
+
+          CHECK NOT lt_shadow_rev IS INITIAL.
+          DATA(lt_shadow_tot) = lt_shadow_rev.
+
+*Check if Batch is already Released
+          IF NOT <fs_parameter>-p_batrel IS INITIAL.
+            READ TABLE lt_shadow INTO ls_shadow WITH KEY level = '02'.
+*Remove the MTART check on FERT
+*Check to be done in table QMAT, accessing with plant/material, AKTIVE = ‘X’ and
+*ART in ZVV_PARAM ‘ZKROHRECOG_QM_REL_ID’ initially valued as ’04’ and ‘Q22’ variable
+            SELECT SINGLE COUNT(*) FROM qmat
+                                   WHERE art   IN @lr_art          AND
+                                         matnr EQ @ls_shadow-matnr AND
+                                         werks EQ @ls_shadow-werks AND
+                                         aktiv EQ 'X'.
+            IF sy-subrc = 0.
+              SELECT prueflos,objnr FROM qals INTO @DATA(ls_qals)
+                                    WHERE werk  = @ls_shadow-werks AND
+                                          aufnr = @ls_shadow-aufnr AND
+                                          matnr = @ls_shadow-matnr AND
+                                          charg = @ls_shadow-charg.
+                CALL FUNCTION 'QAST_STATUS_CHECK'
+                  EXPORTING
+                    i_objnr          = ls_qals-objnr
+                    i_status         = 'I0224'
+                  EXCEPTIONS
+                    status_not_activ = 1
+                    OTHERS           = 2.
+                IF sy-subrc <> 0.
+                  EXIT.
+                ELSE.
+                  CLEAR ls_qals.
+                ENDIF.
+              ENDSELECT.
+              IF NOT ls_qals-prueflos IS INITIAL.
+                SELECT SINGLE * FROM qave INTO @DATA(ls_qave)
+                                WHERE prueflos = @ls_qals-prueflos.
+                CHECK NOT ls_qave-vdatum IS INITIAL AND
+                          ls_qave-vdatum IN <fs_parameter>-r_exdate.
+                SELECT SINGLE kurztext FROM qpct INTO @DATA(lv_kurztext)
+                                       WHERE katalogart = '3'               AND
+                                             codegruppe = @ls_qave-vcodegrp AND
+                                             code       = @ls_qave-vcode    AND
+                                             sprache    = 'E'.
+                IF sy-subrc <> 0.
+                  SELECT SINGLE kurztext FROM qpct INTO @lv_kurztext
+                                         WHERE katalogart = '3'               AND
+                                               codegruppe = @ls_qave-vcodegrp AND
+                                               code       = @ls_qave-vcode    AND
+                                               sprache    = @sy-langu.
+                ENDIF.
+              ENDIF.
+            ENDIF.
+          ENDIF.
+
+*Process Order Consumption Details
+          SELECT aufnr,auart,bukrs,werks FROM aufk
+                                         INTO TABLE @DATA(lt_aufk)
+                                         FOR ALL ENTRIES IN @lt_shadow_rev
+                                         WHERE aufnr EQ @lt_shadow_rev-aufnr.
+          IF NOT lt_aufk IS INITIAL.
+            SELECT aufnr,posnr,matnr,charg FROM afpo
+                                           INTO TABLE @DATA(lt_afpo)
+                                           FOR ALL ENTRIES IN @lt_aufk
+                                           WHERE aufnr EQ @lt_aufk-aufnr.
+            SELECT * FROM aufm INTO TABLE @DATA(lt_aufm)
+                               FOR ALL ENTRIES IN @lt_aufk
+                               WHERE aufnr EQ @lt_aufk-aufnr.
+            DELETE lt_aufm WHERE budat NOT IN <fs_parameter>-r_exdate.
+            IF NOT lr_bwart IS INITIAL.
+              DELETE lt_aufm WHERE bwart NOT IN lr_bwart.
+            ENDIF.
+*WBS details
+            CHECK NOT lt_aufm IS INITIAL.
+            LOOP AT lt_aufm TRANSPORTING NO FIELDS
+                            WHERE ps_psp_pnr IS NOT INITIAL.
+              EXIT.
+            ENDLOOP.
+            IF sy-subrc = 0.
+              SELECT pspnr,posid,post1,objnr,psphi,pbukr,pkokr,kzbws,zcustom
+                                       FROM prps INTO TABLE @lt_prps
+                                       FOR ALL ENTRIES IN @lt_aufm
+                                       WHERE pspnr = @lt_aufm-ps_psp_pnr.
+*Standard Cost
+*Valuation of Project Stock: History
+              SELECT * FROM qbewh INTO TABLE @DATA(lt_qbewh)
+                                  FOR ALL ENTRIES IN @lt_aufm
+                                  WHERE matnr EQ @lt_aufm-matnr      AND
+                                        bwkey EQ @lt_aufm-werks      AND
+                                        bwtar EQ @lt_aufm-bwtar      AND
+                                        sobkz EQ @lt_aufm-sobkz      AND
+                                        pspnr EQ @lt_aufm-ps_psp_pnr AND
+                                        lfgja LE @lt_aufm-budat+0(4).
+            ENDIF.
+*Material Data & Description
+            SELECT matnr,mtart FROM mara INTO TABLE @DATA(lt_mara)
+                               FOR ALL ENTRIES IN @lt_aufm
+                               WHERE matnr = @lt_aufm-matnr.
+            SELECT matnr,spras,maktx FROM makt INTO TABLE @DATA(lt_makt)
+                                     FOR ALL ENTRIES IN @lt_aufm
+                                     WHERE matnr = @lt_aufm-matnr.
+*Material Valuation: History
+            SELECT * FROM mbewh INTO TABLE @DATA(lt_mbewh)
+                                FOR ALL ENTRIES IN @lt_aufm
+                                WHERE matnr EQ @lt_aufm-matnr AND
+                                      bwkey EQ @lt_aufm-werks AND
+                                      bwtar EQ @lt_aufm-bwtar AND
+                                      lfgja LE @lt_aufm-budat+0(4).
+*Material Valuation
+            SELECT * FROM mbew INTO TABLE @DATA(lt_mbew)
+                               FOR ALL ENTRIES IN @lt_aufm
+                               WHERE matnr = @lt_aufm-matnr      AND
+                                     bwkey = @lt_aufm-werks      AND
+                                     bwtar = @lt_aufm-bwtar      AND
+                                     lfgja = @lt_aufm-budat+0(4) AND
+                                     lfmon = @lt_aufm-budat+4(2).
+*Reservation/dependent requirements
+            SELECT rsnum,rspos,sanka FROM resb INTO TABLE @DATA(lt_resb)
+                                     FOR ALL ENTRIES IN @lt_aufm
+                                     WHERE rsnum = @lt_aufm-rsnum AND
+                                           rspos = @lt_aufm-rspos.
+*Actual Cost
+*Material Ledger: Header Record
+            SELECT * FROM ckmlhd INTO TABLE @DATA(lt_ckmlhd)
+                                 FOR ALL ENTRIES IN @lt_aufm
+                                 WHERE matnr = @lt_aufm-matnr AND
+                                       bwkey = @lt_aufm-werks AND
+                                       bwtar = @lt_aufm-bwtar.
+*Material Ledger: Period Totals Records Values
+            IF NOT lt_ckmlhd IS INITIAL.
+              SELECT * FROM ckmlcr INTO TABLE @DATA(lt_ckmlcr)
+                                   FOR ALL ENTRIES IN @lt_ckmlhd
+                                   WHERE kalnr = @lt_ckmlhd-kalnr AND
+                                         curtp = '10'.
+            ENDIF.
+            DATA(lt_tqbewh)  = lt_qbewh.
+            DATA(lt_tmbewh)  = lt_mbewh.
+            DATA(lt_tckmlcr) = lt_ckmlcr.
+            CLEAR:lt_tqbewh,lt_tmbewh,lt_tckmlcr.
+*        ENDIF.
+          ENDIF.
+
+*Proportion Rate Calculation based on Prorata as well as Parent Level Prop.Rate
+          CLEAR lt_result_prop.
+          DATA(lt_shadow_rate1) = lt_shadow.
+          DATA(lt_shadow_rate2) = lt_shadow_rev.
+          DELETE:lt_shadow_rate1 WHERE level = '01',
+                 lt_shadow_rate2 WHERE level = '01'.
+          DELETE lt_shadow_rate1 WHERE type NE 'A'."Process Order lines
+          SORT lt_shadow_rate1 BY level ASCENDING id ASCENDING.
+          LOOP AT lt_shadow_rate1 INTO DATA(ls_shadow_rate1)."Process Order lines
+*                                  WHERE type = 'A'.
+            CLEAR ls_result_prop.
+            MOVE-CORRESPONDING ls_shadow_rate1 TO ls_result_prop.
+            IF ls_shadow_rate1-level = '02'."Top Level Process Order
+              ls_result_prop-prop_rate = 1.
+              APPEND ls_result_prop TO lt_result_prop.
+            ELSE.
+              LOOP AT lt_shadow_rate2 INTO DATA(ls_shadow_rate2)
+                                      WHERE type  EQ 'C'                     AND
+                                            matnr EQ ls_shadow_rate1-matnr   AND
+                                          ( werks EQ ls_shadow_rate1-werks   OR
+                                            werks NE ls_shadow_rate1-werks ) AND
+                                            charg EQ ls_shadow_rate1-charg.
+                IF NOT ls_shadow_rate2-ummat IS INITIAL AND
+                   NOT ls_shadow_rate2-umwrk IS INITIAL AND
+                   NOT ls_shadow_rate2-umcha IS INITIAL.
+                  READ TABLE lt_shadow_rate2 INTO DATA(ls_shadow_rate_t)
+                                             WITH KEY type  = 'C'
+                                                      matnr = ls_shadow_rate2-ummat
+                                                      werks = ls_shadow_rate2-umwrk
+                                                      charg = ls_shadow_rate2-umcha.
+                  IF sy-subrc = 0.
+                    MOVE-CORRESPONDING ls_shadow_rate_t TO ls_shadow_rate2.
+                  ENDIF.
+                ENDIF.
+                READ TABLE lt_result_prop INTO DATA(ls_result_propt)
+                                          WITH KEY aufnr = ls_shadow_rate2-aufnr.
+                IF sy-subrc = 0.
+                  ls_result_prop-prop_rate = ( ls_shadow_rate2-menge / ls_shadow_rate1-menge ) * ls_result_propt-prop_rate.
+                  APPEND ls_result_prop TO lt_result_prop.
+                ENDIF.
+                CLEAR:ls_shadow_rate2,ls_shadow_rate_t,ls_result_propt.
+              ENDLOOP.
+*              IF sy-subrc = 0.
+*                IF NOT ls_shadow_rate2-ummat IS INITIAL AND
+*                   NOT ls_shadow_rate2-umwrk IS INITIAL AND
+*                   NOT ls_shadow_rate2-umcha IS INITIAL.
+*                  READ TABLE lt_shadow_rate2 INTO DATA(ls_shadow_rate_t)
+*                                             WITH KEY type  = 'C'
+*                                                      matnr = ls_shadow_rate2-ummat
+*                                                      werks = ls_shadow_rate2-umwrk
+*                                                      charg = ls_shadow_rate2-umcha.
+*                  IF sy-subrc = 0.
+*                    MOVE-CORRESPONDING ls_shadow_rate_t TO ls_shadow_rate2.
+*                  ENDIF.
+*                ENDIF.
+*                READ TABLE lt_result_prop INTO DATA(ls_result_propt)
+*                                          WITH KEY aufnr = ls_shadow_rate2-aufnr.
+*                ls_result_prop-prop_rate = ( ls_shadow_rate2-menge / ls_shadow_rate1-menge ) * ls_result_propt-prop_rate.
+*              ELSE.
+*                CONTINUE.
+*              ENDIF.
+            ENDIF.
+*            APPEND ls_result_prop TO lt_result_prop.
+*            CLEAR:ls_result_prop,ls_shadow_rate1,ls_shadow_rate2,
+*                  ls_shadow_rate_t,ls_result_propt.
+          ENDLOOP.
+          SORT lt_result_prop BY aufnr werks charg matnr.
+          DELETE ADJACENT DUPLICATES FROM lt_result_prop
+                                COMPARING aufnr werks charg matnr.
+*--------------------------------------------------------------------*
+*Header Record Count
+          lv_main_index = lv_main_index + 1.
+
+          MOVE-CORRESPONDING ls_mcha TO ls_mcha_top.
+          ls_mcha_top-index = lv_main_index.
+          APPEND ls_mcha_top TO mt_mcha.
+
+          LOOP AT lt_shadow_rev INTO DATA(ls_shadow_rev)
+                                WHERE type = 'A'."Process Order lines
+            IF ls_shadow_rev-level = '02'."Top Level Process Order
+              lv_rate = 1.
+            ELSE.
+*              DATA(lv_index) = sy-tabix.
+*              lv_index = lv_index + 1.
+**Check Actual Material Consumption line for Prorata Calculation
+*              READ TABLE lt_shadow_tot INTO ls_shadow INDEX lv_index.
+*              lv_rate = ls_shadow-menge / ls_shadow_rev-menge.
+              READ TABLE lt_result_prop INTO ls_result_prop
+                                        WITH KEY aufnr = ls_shadow_rev-aufnr.
+              lv_rate = ls_result_prop-prop_rate.
+            ENDIF.
+*Calculate Pro-rated Quantity Calculations for all Material lines
+            LOOP AT lt_shadow INTO ls_shadow
+                              WHERE "Material Consumption Lines
+                                    ( type  = 'C' AND aufnr = ls_shadow_rev-aufnr ) OR
+                                    "Actual Finished Product based on Top most Process Order
+                                    ( type  = 'A' AND aufnr = ls_shadow_rev-aufnr AND level = '02' ).
+*Header Record Index
+              ls_result-main_index   = lv_main_index.
+*Item Record Index
+              ls_result-record_index = sy-tabix.
+*Level
+              ls_result-level = ls_shadow-level.
+*Process Order Details
+              READ TABLE:lt_aufk INTO DATA(ls_aufk)
+                                 WITH KEY aufnr = ls_shadow_rev-aufnr,
+                         lt_afpo INTO DATA(ls_afpo)
+                                 WITH KEY aufnr = ls_shadow_rev-aufnr.
+              ls_result-aufnr       = ls_aufk-aufnr.
+              ls_result-bukrs       = ls_aufk-bukrs.
+              ls_result-werks       = ls_aufk-werks.
+              ls_result-auart       = ls_aufk-auart.
+              ls_result-matnr_prd   = ls_afpo-matnr.
+              ls_result-charg_prd   = ls_afpo-charg.
+*Material Description
+              READ TABLE lt_makt INTO DATA(ls_makt)
+                                 WITH KEY matnr = ls_afpo-matnr
+                                          spras = 'E'.
+              IF sy-subrc <> 0.
+                READ TABLE lt_makt INTO ls_makt
+                                   WITH KEY matnr = ls_afpo-matnr.
+              ENDIF.
+              ls_result-maktx_prd = ls_makt-maktx.
+
+*Batch Release Status
+              IF ls_shadow-level = '02'.
+                ls_result-batch_reldate = ls_qave-vdatum.
+                ls_result-rel_text      = lv_kurztext.
+              ENDIF.
+
+*Consumption Details
+              LOOP AT lt_aufm INTO DATA(ls_aufm)
+                              WHERE matnr EQ ls_shadow-matnr AND
+                                    charg EQ ls_shadow-charg AND
+                                    aufnr EQ ls_aufk-aufnr   AND
+                                  ( bwart IN lr_bwart_gi     OR
+                                    bwart IN lr_bwart_gr ).
+                ls_result-line_type = text-004. "Material Consumed
+*Check if WBS Exists on this Line
+                IF NOT ls_aufm-ps_psp_pnr IS INITIAL.
+                  READ TABLE lt_prps INTO DATA(ls_prps)
+                                     WITH KEY pspnr = ls_aufm-ps_psp_pnr.
+                ENDIF.
+                ls_result-pspnr_wbs = ls_prps-pspnr.
+                ls_result-post1     = ls_prps-post1.
+                ls_result-kunnr     = ls_prps-zcustom.
+                ls_result-pspnr_prj = ls_prps-psphi.
+*Material Data & Description
+                CLEAR ls_makt.
+                READ TABLE lt_mara INTO DATA(ls_mara)
+                                   WITH KEY matnr = ls_aufm-matnr.
+                READ TABLE lt_makt INTO ls_makt
+                                   WITH KEY matnr = ls_aufm-matnr
+                                            spras = 'E'.
+                IF sy-subrc <> 0.
+                  READ TABLE lt_makt INTO ls_makt
+                                     WITH KEY matnr = ls_aufm-matnr.
+                ENDIF.
+                ls_result-charg  = ls_aufm-charg.
+                ls_result-matnr  = ls_aufm-matnr.
+                ls_result-maktx  = ls_makt-maktx.
+                ls_result-mtart  = ls_shadow-zmtart.
+                IF ls_shadow-type  = 'A'.
+                  IF ls_aufm-shkzg = 'H'.
+                    ls_aufm-menge  = ls_aufm-menge * -1.
+                  ENDIF.
+                ELSE.
+                  IF ls_aufm-shkzg = 'S'.
+                    ls_aufm-menge  = ls_aufm-menge * -1.
+                  ENDIF.
+                ENDIF.
+                ls_result-menge_prd = ls_shadow_rev-menge.
+                ls_result-menge_act = ls_aufm-menge.
+                ls_result-meins     = ls_aufm-meins.
+*DO NOT Display Data for the Finished Product Lines
+                IF ls_shadow-type <> 'A'.
+                  CLEAR lv_bklas.
+                  ls_result-prop_rate  = lv_rate.
+                  ls_result-menge_prop = ls_aufm-menge * lv_rate.
+*Cost Calculation
+                  IF NOT ls_prps-pspnr IS INITIAL."WBS Exists
+*Standard Cost
+                    IF ls_prps-kzbws = 'M'. "Standard Price from QBEWH
+*--------------------------------------------------------------------*
+                      CLEAR lt_tqbewh.
+                      LOOP AT lt_qbewh INTO DATA(ls_qbewh)
+                                       WHERE matnr EQ ls_aufm-matnr      AND
+                                             bwkey EQ ls_aufm-werks      AND
+                                             bwtar EQ ls_aufm-bwtar      AND
+                                             sobkz EQ ls_aufm-sobkz      AND
+                                             pspnr EQ ls_aufm-ps_psp_pnr AND
+                                             lfgja LE ls_aufm-budat+0(4).
+                        APPEND ls_qbewh TO lt_tqbewh.
+                        CLEAR ls_qbewh.
+                      ENDLOOP.
+                      DELETE lt_tqbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                             lfmon GT ls_aufm-budat+4(2).
+                      SORT lt_tqbewh BY lfgja DESCENDING lfmon DESCENDING.
+                      READ TABLE lt_tqbewh INTO ls_qbewh INDEX 1.
+*--------------------------------------------------------------------*
+                      IF ls_qbewh-vprsv = 'V'.
+                        lv_stprs_std = ls_qbewh-verpr."Moving Average Price/Periodic Unit Price
+                      ELSEIF ls_qbewh-vprsv = 'S'.
+                        lv_stprs_std = ls_qbewh-stprs."Standard price
+                      ENDIF.
+                      lv_peinh_std = ls_qbewh-peinh.
+                      lv_bklas     = ls_qbewh-bklas.
+                    ELSE. "Standard Price from MBEWH
+*--------------------------------------------------------------------*
+*Check MBEW for Standard Price in Current Period, Else Check in MBEWH as this is Historic
+                      READ TABLE lt_mbew INTO DATA(ls_mbew)
+                                         WITH KEY matnr = ls_aufm-matnr
+                                                  bwkey = ls_aufm-werks
+                                                  bwtar = ls_aufm-bwtar
+                                                  lfgja = ls_aufm-budat+0(4)
+                                                  lfmon = ls_aufm-budat+4(2).
+                      IF sy-subrc <> 0.
+                        CLEAR lt_tmbewh.
+                        LOOP AT lt_mbewh INTO DATA(ls_mbewh)
+                                         WHERE matnr EQ ls_aufm-matnr AND
+                                               bwkey EQ ls_aufm-werks AND
+                                               bwtar EQ ls_aufm-bwtar AND
+                                               lfgja LE ls_aufm-budat+0(4).
+                          APPEND ls_mbewh TO lt_tmbewh.
+                          CLEAR ls_mbewh.
+                        ENDLOOP.
+                        DELETE lt_tmbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                               lfmon GT ls_aufm-budat+4(2).
+                        SORT lt_tmbewh BY lfgja DESCENDING lfmon DESCENDING.
+                        READ TABLE lt_tmbewh INTO ls_mbewh INDEX 1.
+                      ELSE.
+                        MOVE-CORRESPONDING ls_mbew TO ls_mbewh.
+                      ENDIF.
+*--------------------------------------------------------------------*
+                      IF ls_mbewh-vprsv = 'V'.
+                        lv_stprs_std = ls_mbewh-verpr."Moving Average Price/Periodic Unit Price
+                      ELSEIF ls_mbewh-vprsv = 'S'.
+                        lv_stprs_std = ls_mbewh-stprs."Standard price
+                      ENDIF.
+                      lv_peinh_std = ls_mbewh-peinh.
+                      lv_bklas     = ls_mbewh-bklas.
+                    ENDIF.
+*Actual Cost
+                    IF ls_prps-kzbws = 'M'.
+                      READ TABLE lt_ckmlhd INTO DATA(ls_ckmlhd)
+                                          WITH KEY matnr = ls_aufm-matnr
+                                                   bwkey = ls_aufm-werks
+                                                   bwtar = ls_aufm-bwtar
+                                                   sobkz = ls_aufm-sobkz
+                                                   pspnr = ls_aufm-ps_psp_pnr
+                                                   kzbws = ls_prps-kzbws.
+                    ELSE.
+                      READ TABLE lt_ckmlhd INTO ls_ckmlhd
+                                          WITH KEY matnr = ls_aufm-matnr
+                                                   bwkey = ls_aufm-werks
+                                                   bwtar = ls_aufm-bwtar
+                                                   sobkz = ''
+                                                   pspnr = ''
+                                                   kzbws = ''.
+                    ENDIF.
+                    IF NOT ls_ckmlhd IS INITIAL.
+*--------------------------------------------------------------------*
+                      CLEAR lt_tckmlcr.
+                      LOOP AT lt_ckmlcr INTO DATA(ls_ckmlcr)
+                                        WHERE kalnr EQ ls_ckmlhd-kalnr AND
+                                              bdatj LE ls_aufm-budat+0(4).
+                        APPEND ls_ckmlcr TO lt_tckmlcr.
+                        CLEAR ls_ckmlcr.
+                      ENDLOOP.
+                      CLEAR:ls_ckmlcr,lv_poper.
+                      lv_poper = ls_aufm-budat+4(2).
+                      DELETE lt_tckmlcr WHERE bdatj EQ ls_aufm-budat+0(4) AND
+                                              poper GT lv_poper.
+                      SORT lt_tckmlcr BY bdatj DESCENDING poper DESCENDING.
+                      READ TABLE lt_tckmlcr INTO ls_ckmlcr INDEX 1.
+*--------------------------------------------------------------------*
+                      lv_stprs_act = ls_ckmlcr-pvprs."Periodic unit price
+                      lv_peinh_act = ls_ckmlcr-peinh.
+                      lv_waers_act = ls_ckmlcr-waers.
+                    ENDIF.
+                    CLEAR:ls_ckmlhd,ls_ckmlcr,ls_qbewh,ls_mbewh.
+                  ELSE."WBS DOES NOT Exist
+*Standard Cost
+*--------------------------------------------------------------------*
+                    READ TABLE lt_mbew INTO ls_mbew
+                                       WITH KEY matnr = ls_aufm-matnr
+                                                bwkey = ls_aufm-werks
+                                                bwtar = ls_aufm-bwtar
+                                                lfgja = ls_aufm-budat+0(4)
+                                                lfmon = ls_aufm-budat+4(2).
+                    IF sy-subrc <> 0.
+                      CLEAR lt_tmbewh.
+                      LOOP AT lt_mbewh INTO ls_mbewh
+                                       WHERE matnr EQ ls_aufm-matnr AND
+                                             bwkey EQ ls_aufm-werks AND
+                                             bwtar EQ ls_aufm-bwtar AND
+                                             lfgja LE ls_aufm-budat+0(4).
+                        APPEND ls_mbewh TO lt_tmbewh.
+                        CLEAR ls_mbewh.
+                      ENDLOOP.
+                      DELETE lt_tmbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                             lfmon GT ls_aufm-budat+4(2).
+                      SORT lt_tmbewh BY lfgja DESCENDING lfmon DESCENDING.
+                      READ TABLE lt_tmbewh INTO ls_mbewh INDEX 1.
+                    ELSE.
+                      MOVE-CORRESPONDING ls_mbew TO ls_mbewh.
+                    ENDIF.
+*--------------------------------------------------------------------*
+                    IF ls_mbewh-vprsv = 'V'.
+                      lv_stprs_std = ls_mbewh-verpr."Moving Average Price/Periodic Unit Price
+                    ELSEIF ls_mbewh-vprsv = 'S'.
+                      lv_stprs_std = ls_mbewh-stprs."Standard price
+                    ENDIF.
+                    lv_peinh_std = ls_mbewh-peinh.
+                    lv_bklas     = ls_mbewh-bklas.
+*Actual Cost
+                    READ TABLE lt_ckmlhd INTO ls_ckmlhd
+                                        WITH KEY matnr = ls_aufm-matnr
+                                                 bwkey = ls_aufm-werks
+                                                 bwtar = ls_aufm-bwtar
+                                                 sobkz = ''
+                                                 pspnr = ''
+                                                 kzbws = ''.
+                    IF NOT ls_ckmlhd IS INITIAL.
+*--------------------------------------------------------------------*
+                      CLEAR:lt_tckmlcr,lv_poper.
+                      LOOP AT lt_ckmlcr INTO ls_ckmlcr
+                                        WHERE kalnr EQ ls_ckmlhd-kalnr AND
+                                              bdatj LE ls_aufm-budat+0(4).
+                        APPEND ls_ckmlcr TO lt_tckmlcr.
+                        CLEAR ls_ckmlcr.
+                      ENDLOOP.
+                      lv_poper = ls_aufm-budat+4(2).
+                      DELETE lt_tckmlcr WHERE bdatj EQ ls_aufm-budat+0(4) AND
+                                              poper GT lv_poper.
+                      SORT lt_tckmlcr BY bdatj DESCENDING poper DESCENDING.
+                      READ TABLE lt_tckmlcr INTO ls_ckmlcr INDEX 1.
+*--------------------------------------------------------------------*
+                      lv_stprs_act = ls_ckmlcr-pvprs."Periodic Unit Price
+                      lv_peinh_act = ls_ckmlcr-peinh.
+                      lv_waers_act = ls_ckmlcr-waers.
+                    ENDIF.
+                  ENDIF.
+*Cost Calculations
+                  ls_result-stprs         = ( lv_stprs_std / lv_peinh_std ).
+                  ls_result-prop_cost_std = ls_result-menge_prop * ( lv_stprs_std / lv_peinh_std ).
+                  ls_result-pup_price     = ( lv_stprs_act / lv_peinh_act ).
+                  ls_result-prop_cost_act = ls_result-menge_prop * ( lv_stprs_act / lv_peinh_act ).
+                  ls_result-currency      = lv_waers_act.
+*Mark Up%
+                  lv_markup = ls_result-markup = calculate_markup( is_aufm  = ls_aufm
+                                                                   iv_kunnr = ls_prps-zcustom ).
+*Amount to be recognized(Incl.Markup)
+                  CLEAR lv_resb_flag.
+                  READ TABLE lt_resb INTO DATA(ls_resb)
+                                     WITH KEY rsnum = ls_aufm-rsnum
+                                              rspos = ls_aufm-rspos.
+                  IF sy-subrc = 0 AND ls_resb-sanka IS INITIAL.
+                    lv_resb_flag = abap_true.
+                  ENDIF.
+                  ls_result-sanka = ls_resb-sanka.
+*Extract the 'Buffer fixed Price Quota' (this time it’s a fixed amount) in the separate column
+*we need to go through the following access sequence (only for HALB, FERT and SERV),
+*so only for the mat type in ZVV_PARAM- ZKROHRECOG_MATTYPE_DELETION)
+                  IF NOT lr_mtart_del IS INITIAL.
+                    IF NOT ls_mara-mtart IN lr_mtart_del.
+*Buffer Fixed Price Quota
+                      CALL METHOD me->product_price_wo_explosion_poc
+                        EXPORTING
+                          is_aufm       = ls_aufm
+                          iv_kunnr      = ls_prps-zcustom
+                        IMPORTING
+                          ev_amount     = lv_prod_price
+                          ev_kznep      = lv_kznep
+                          ev_cond_found = lv_cond_found.
+*Product Price w/o Explosion POC
+                      IF lv_prod_price <> 0.
+                        ls_result-product_price = lv_prod_price * ls_result-menge_prop.
+                        CLEAR:ls_result-prop_cost_std,ls_result-prop_cost_act.",ls_result-markup.ls_result-pup_price,
+                      ENDIF.
+*Check for Condition exclusion indicator
+                      IF NOT lv_kznep IS INITIAL OR NOT lv_resb_flag IS INITIAL.
+*--------------------------------------------------------------------*
+                        CLEAR:lrs_aufnr,ls_parent.
+                        lrs_aufnr-sign   = 'I'.
+                        lrs_aufnr-option = 'EQ'.
+                        lrs_aufnr-low    = ls_shadow-aufnr.
+                        APPEND lrs_aufnr TO lr_aufnr.
+                        ls_parent-aufnr = ls_shadow-aufnr.
+                        ls_parent-charg = ls_shadow-charg.
+                        APPEND ls_parent TO lt_parent.
+*--------------------------------------------------------------------*
+*                        DATA(lv_matnr_explode) = ls_shadow-matnr.
+*                        DATA(lv_werks_explode) = ls_shadow-werks.
+*                        DATA(lv_charg_explode) = ls_shadow-charg.
+*                        DO.
+*                          READ TABLE lt_shadow INTO ls_shadow_top
+*                                               WITH KEY type  = 'A'
+*                                                        matnr = lv_matnr_explode
+*                                                        werks = lv_werks_explode
+*                                                        charg = lv_charg_explode.
+*                          IF sy-subrc NE 0 AND ls_result-werks NE lv_werks_explode.
+*                            READ TABLE lt_shadow INTO ls_shadow_top
+*                                                 WITH KEY type  = 'A'
+*                                                          matnr = lv_matnr_explode
+*                                                          werks = ls_result-werks
+*                                                          charg = lv_charg_explode.
+*                          ENDIF.
+*                          IF NOT ls_shadow_top IS INITIAL.
+*                            CLEAR lrs_aufnr.
+*                            lrs_aufnr-sign     = 'I'.
+*                            lrs_aufnr-option   = 'EQ'.
+*                            lrs_aufnr-low      = ls_shadow_top-aufnr.
+*                            DATA(lv_aufnr)     = ls_shadow_top-aufnr.
+*                            DATA(lv_matnr_lvl) = ls_shadow_top-matnr.
+*                            DATA(lv_werks_lvl) = ls_shadow_top-werks.
+*                            DATA(lv_charg_lvl) = ls_shadow_top-charg.
+*                            APPEND lrs_aufnr TO lr_aufnr.
+*                            LOOP AT lt_shadow INTO ls_shadow_top
+*                                              WHERE aufnr EQ lv_aufnr.
+*                              IF lv_matnr_lvl EQ ls_shadow_top-matnr AND
+*                                 lv_werks_lvl EQ ls_shadow_top-werks AND
+*                                 lv_charg_lvl EQ ls_shadow_top-charg .
+*                                CONTINUE.
+*                              ENDIF.
+*                              READ TABLE lt_shadow INTO DATA(ls_shadow_level)
+*                                                   WITH KEY type  = 'A'
+*                                                            matnr = ls_shadow_top-matnr
+*                                                            werks = ls_shadow_top-werks
+*                                                            charg = ls_shadow_top-charg.
+*                              IF sy-subrc = 0.
+*                                CLEAR lrs_aufnr.
+*                                lrs_aufnr-sign   = 'I'.
+*                                lrs_aufnr-option = 'EQ'.
+*                                lrs_aufnr-low    = ls_shadow_level-aufnr.
+*                                APPEND lrs_aufnr TO lr_aufnr.
+*                                lv_matnr_explode = ls_shadow_level-matnr.
+*                                lv_werks_explode = ls_shadow_level-werks.
+*                                lv_charg_explode = ls_shadow_level-charg.
+*                                DATA(lv_valid_lvl) = abap_true.
+*                                EXIT.
+*                              ENDIF.
+*                            ENDLOOP.
+*                            IF lv_valid_lvl IS INITIAL.
+*                              EXIT.
+*                            ENDIF.
+*                          ELSE.
+*                            EXIT.
+*                          ENDIF.
+*                          CLEAR lv_valid_lvl.
+*                        ENDDO.
+                      ENDIF.
+                      ls_result-cond_found = lv_cond_found.
+                    ENDIF.
+                  ENDIF.
+*Amount to be recognized(Incl.Markup)
+*                  READ TABLE lt_resb INTO DATA(ls_resb)
+*                                     WITH KEY rsnum = ls_aufm-rsnum
+*                                              rspos = ls_aufm-rspos.
+*                  IF sy-subrc = 0 AND ls_resb-sanka IS INITIAL.
+                  IF NOT lv_resb_flag IS INITIAL.
+                  ELSE.
+*IF Product Price w/o Explosion POC is FOUND, Recog.Amount equals Condition Price
+                    IF lv_prod_price <> 0 OR NOT lv_cond_found IS INITIAL.
+                      IF lv_markup <> 0.
+                        ls_result-recog_amt = ls_result-product_price + ( ( ls_result-product_price * lv_markup ) / 100 ).
+                      ELSE.
+                        ls_result-recog_amt = ls_result-product_price.
+                      ENDIF.
+                    ELSE.
+                      IF ls_mara-mtart IN lr_mtart_del OR lv_bklas IN mrt_bklas.
+                        ls_result-recog_amt = ls_result-prop_cost_act + ( ( ls_result-prop_cost_act * lv_markup ) / 100 ).
+                      ENDIF.
+                    ENDIF.
+                  ENDIF.
+                ENDIF.
+                ls_result-budat = ls_aufm-budat.
+                ls_result-monat = ls_aufm-budat+4(2).
+                ls_result-gjahr = ls_aufm-budat+0(4).
+*Material Document Details
+                ls_result-mblnr = ls_aufm-mblnr.
+                ls_result-mjahr = ls_aufm-mjahr.
+                ls_result-zeile = ls_aufm-zeile.
+                ls_result-bwart = ls_aufm-bwart.
+
+                APPEND ls_result TO lt_result_c.
+*Take all the WBS elements found in consumed material section with a
+*balance on ‘Amount to be recognized’ - Revenue Line Items
+                IF NOT ls_prps IS INITIAL AND ls_result-recog_amt > 0.
+                  APPEND ls_prps TO lt_tprps.
+                ENDIF.
+*Capture Line Index for Next Parameters
+                IF lv_record_index < ls_result-record_index.
+                  lv_record_index = ls_result-record_index.
+                ENDIF.
+
+                CLEAR:ls_ckmlhd,ls_ckmlcr,ls_mbewh,ls_qbewh,ls_mbew,ls_prps,ls_mara,
+                      lv_stprs_std,lv_peinh_std,lv_stprs_act,lv_peinh_act,lv_prod_price,
+                      ls_result-prop_rate,ls_result-menge_prop,ls_result-stprs,lv_kznep,
+                      ls_result-prop_cost_std,ls_result-pup_price,ls_result-prop_cost_act,
+                      ls_result-markup,ls_result-recog_amt,ls_makt,ls_result-batch_reldate,
+                      ls_result-rel_text,ls_result-product_price,ls_resb,lv_markup,
+                      ls_result-cond_found,lv_cond_found,ls_result-sanka,lv_waers_act.
+              ENDLOOP.
+**If Condition exclusion indicator is FOUND all the below sub-levels must be set an 0 as amount to be recognized.
+*              IF NOT ls_shadow_top IS INITIAL.
+*                LOOP AT lt_result_c ASSIGNING FIELD-SYMBOL(<fs_result>)
+*                                    WHERE aufnr EQ ls_shadow_top-aufnr.
+*                  CLEAR <fs_result>-recog_amt.
+*                ENDLOOP.
+*              ENDIF.
+*Item Record Index
+              DATA(lv_multi_record_index) = ls_result-record_index.
+*Level
+              DATA(lv_multi_record_level) = ls_result-level.
+
+              CLEAR:ls_result,ls_aufk,ls_afpo,ls_shadow_top,lv_rate_mul,lv_rate_mul_p.
+*--------------------------------------------------------------------*
+*Check for Batches that repeat multiple times in the production process
+              IF NOT ls_shadow-redun IS INITIAL.
+                READ TABLE lt_shadow INTO DATA(ls_shadow_multi)
+                                     WITH KEY type  = 'A'
+                                              matnr = ls_shadow-matnr
+                                              werks = ls_shadow-werks
+                                              charg = ls_shadow-charg.
+                IF sy-subrc = 0.
+*                  DO.
+*                    IF sy-subrc = 0.
+                  READ TABLE lt_result_prop INTO DATA(ls_result_prop_t)
+                                            WITH KEY aufnr = ls_shadow-aufnr.
+                  lv_rate_mul_p = ls_result_prop_t-prop_rate.
+*Calculate Rate based on New Hierarchy
+                  lv_rate_mul = lv_rate_mul_p * ( ls_shadow-menge / ls_shadow_multi-menge ).
+*Calculate Pro-rated Quantity Calculations for all Material lines
+                  LOOP AT lt_shadow INTO ls_shadow  "Material Consumption Lines
+                                    WHERE type  = 'C' AND
+                                          aufnr = ls_shadow_multi-aufnr.
+*Internal Counter for Multiple Reapeated Batch Lines
+                    lv_mrec_count = lv_mrec_count + '0.00001'.
+*Header Record Index
+                    ls_result-main_index   = lv_main_index.
+*Item Record Index
+                    ls_result-record_index = lv_multi_record_index + lv_mrec_count.
+*Level
+                    ls_result-level = lv_multi_record_level.
+*Process Order Details
+                    READ TABLE:lt_aufk INTO ls_aufk
+                                       WITH KEY aufnr = ls_shadow_multi-aufnr,
+                               lt_afpo INTO ls_afpo
+                                       WITH KEY aufnr = ls_shadow_multi-aufnr.
+                    ls_result-aufnr       = ls_aufk-aufnr.
+                    ls_result-bukrs       = ls_aufk-bukrs.
+                    ls_result-werks       = ls_aufk-werks.
+                    ls_result-auart       = ls_aufk-auart.
+                    ls_result-matnr_prd   = ls_afpo-matnr.
+                    ls_result-charg_prd   = ls_afpo-charg.
+*Material Description
+                    READ TABLE lt_makt INTO ls_makt
+                                       WITH KEY matnr = ls_afpo-matnr
+                                                spras = 'E'.
+                    IF sy-subrc <> 0.
+                      READ TABLE lt_makt INTO ls_makt
+                                         WITH KEY matnr = ls_afpo-matnr.
+                    ENDIF.
+                    ls_result-maktx_prd = ls_makt-maktx.
+
+*Batch Release Status
+                    IF ls_shadow-level = '02'.
+                      ls_result-batch_reldate = ls_qave-vdatum.
+                      ls_result-rel_text      = lv_kurztext.
+                    ENDIF.
+
+*Consumption Details
+                    LOOP AT lt_aufm INTO ls_aufm
+                                    WHERE matnr EQ ls_shadow-matnr AND
+                                          charg EQ ls_shadow-charg AND
+                                          aufnr EQ ls_aufk-aufnr   AND
+                                        ( bwart IN lr_bwart_gi     OR
+                                          bwart IN lr_bwart_gr ).
+                      ls_result-line_type = text-004. "Material Consumed
+*Check if WBS Exists on this Line
+                      IF NOT ls_aufm-ps_psp_pnr IS INITIAL.
+                        READ TABLE lt_prps INTO ls_prps
+                                           WITH KEY pspnr = ls_aufm-ps_psp_pnr.
+                      ENDIF.
+                      ls_result-pspnr_wbs = ls_prps-pspnr.
+                      ls_result-post1     = ls_prps-post1.
+                      ls_result-kunnr     = ls_prps-zcustom.
+                      ls_result-pspnr_prj = ls_prps-psphi.
+*Material Data & Description
+                      CLEAR ls_makt.
+                      READ TABLE lt_mara INTO ls_mara
+                                         WITH KEY matnr = ls_aufm-matnr.
+                      READ TABLE lt_makt INTO ls_makt
+                                         WITH KEY matnr = ls_aufm-matnr
+                                                  spras = 'E'.
+                      IF sy-subrc <> 0.
+                        READ TABLE lt_makt INTO ls_makt
+                                           WITH KEY matnr = ls_aufm-matnr.
+                      ENDIF.
+                      ls_result-charg  = ls_aufm-charg.
+                      ls_result-matnr  = ls_aufm-matnr.
+                      ls_result-maktx  = ls_makt-maktx.
+                      ls_result-mtart  = ls_shadow-zmtart.
+                      IF ls_shadow-type  = 'A'.
+                        IF ls_aufm-shkzg = 'H'.
+                          ls_aufm-menge  = ls_aufm-menge * -1.
+                        ENDIF.
+                      ELSE.
+                        IF ls_aufm-shkzg = 'S'.
+                          ls_aufm-menge  = ls_aufm-menge * -1.
+                        ENDIF.
+                      ENDIF.
+                      ls_result-menge_prd = ls_shadow_multi-menge.
+                      ls_result-menge_act = ls_aufm-menge.
+                      ls_result-meins     = ls_aufm-meins.
+*DO NOT Display Data for the Finished Product Lines
+                      IF ls_shadow-type <> 'A'.
+                        CLEAR lv_bklas.
+                        ls_result-prop_rate  = lv_rate_mul.
+                        ls_result-menge_prop = ls_aufm-menge * lv_rate_mul.
+*Cost Calculation
+                        IF NOT ls_prps-pspnr IS INITIAL."WBS Exists
+*Standard Cost
+                          IF ls_prps-kzbws = 'M'. "Standard Price from QBEWH
+*--------------------------------------------------------------------*
+                            CLEAR lt_tqbewh.
+                            LOOP AT lt_qbewh INTO ls_qbewh
+                                             WHERE matnr EQ ls_aufm-matnr      AND
+                                                   bwkey EQ ls_aufm-werks      AND
+                                                   bwtar EQ ls_aufm-bwtar      AND
+                                                   sobkz EQ ls_aufm-sobkz      AND
+                                                   pspnr EQ ls_aufm-ps_psp_pnr AND
+                                                   lfgja LE ls_aufm-budat+0(4).
+                              APPEND ls_qbewh TO lt_tqbewh.
+                              CLEAR ls_qbewh.
+                            ENDLOOP.
+                            DELETE lt_tqbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                                   lfmon GT ls_aufm-budat+4(2).
+                            SORT lt_tqbewh BY lfgja DESCENDING lfmon DESCENDING.
+                            READ TABLE lt_tqbewh INTO ls_qbewh INDEX 1.
+*--------------------------------------------------------------------*
+                            IF ls_qbewh-vprsv = 'V'.
+                              lv_stprs_std = ls_qbewh-verpr."Moving Average Price/Periodic Unit Price
+                            ELSEIF ls_qbewh-vprsv = 'S'.
+                              lv_stprs_std = ls_qbewh-stprs."Standard price
+                            ENDIF.
+                            lv_peinh_std = ls_qbewh-peinh.
+                            lv_bklas     = ls_qbewh-bklas.
+                          ELSE. "Standard Price from MBEWH
+*--------------------------------------------------------------------*
+*Check MBEW for Standard Price in Current Period, Else Check in MBEWH as this is Historic
+                            READ TABLE lt_mbew INTO ls_mbew
+                                               WITH KEY matnr = ls_aufm-matnr
+                                                        bwkey = ls_aufm-werks
+                                                        bwtar = ls_aufm-bwtar
+                                                        lfgja = ls_aufm-budat+0(4)
+                                                        lfmon = ls_aufm-budat+4(2).
+                            IF sy-subrc <> 0.
+                              CLEAR lt_tmbewh.
+                              LOOP AT lt_mbewh INTO ls_mbewh
+                                               WHERE matnr EQ ls_aufm-matnr AND
+                                                     bwkey EQ ls_aufm-werks AND
+                                                     bwtar EQ ls_aufm-bwtar AND
+                                                     lfgja LE ls_aufm-budat+0(4).
+                                APPEND ls_mbewh TO lt_tmbewh.
+                                CLEAR ls_mbewh.
+                              ENDLOOP.
+                              DELETE lt_tmbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                                     lfmon GT ls_aufm-budat+4(2).
+                              SORT lt_tmbewh BY lfgja DESCENDING lfmon DESCENDING.
+                              READ TABLE lt_tmbewh INTO ls_mbewh INDEX 1.
+                            ELSE.
+                              MOVE-CORRESPONDING ls_mbew TO ls_mbewh.
+                            ENDIF.
+*--------------------------------------------------------------------*
+                            IF ls_mbewh-vprsv = 'V'.
+                              lv_stprs_std = ls_mbewh-verpr."Moving Average Price/Periodic Unit Price
+                            ELSEIF ls_mbewh-vprsv = 'S'.
+                              lv_stprs_std = ls_mbewh-stprs."Standard price
+                            ENDIF.
+                            lv_peinh_std = ls_mbewh-peinh.
+                            lv_bklas     = ls_mbewh-bklas.
+                          ENDIF.
+*Actual Cost
+                          IF ls_prps-kzbws = 'M'.
+                            READ TABLE lt_ckmlhd INTO ls_ckmlhd
+                                                WITH KEY matnr = ls_aufm-matnr
+                                                         bwkey = ls_aufm-werks
+                                                         bwtar = ls_aufm-bwtar
+                                                         sobkz = ls_aufm-sobkz
+                                                         pspnr = ls_aufm-ps_psp_pnr
+                                                         kzbws = ls_prps-kzbws.
+                          ELSE.
+                            READ TABLE lt_ckmlhd INTO ls_ckmlhd
+                                                WITH KEY matnr = ls_aufm-matnr
+                                                         bwkey = ls_aufm-werks
+                                                         bwtar = ls_aufm-bwtar
+                                                         sobkz = ''
+                                                         pspnr = ''
+                                                         kzbws = ''.
+                          ENDIF.
+                          IF NOT ls_ckmlhd IS INITIAL.
+*--------------------------------------------------------------------*
+                            CLEAR lt_tckmlcr.
+                            LOOP AT lt_ckmlcr INTO ls_ckmlcr
+                                              WHERE kalnr EQ ls_ckmlhd-kalnr AND
+                                                    bdatj LE ls_aufm-budat+0(4).
+                              APPEND ls_ckmlcr TO lt_tckmlcr.
+                              CLEAR ls_ckmlcr.
+                            ENDLOOP.
+                            CLEAR:ls_ckmlcr,lv_poper.
+                            lv_poper = ls_aufm-budat+4(2).
+                            DELETE lt_tckmlcr WHERE bdatj EQ ls_aufm-budat+0(4) AND
+                                                    poper GT lv_poper.
+                            SORT lt_tckmlcr BY bdatj DESCENDING poper DESCENDING.
+                            READ TABLE lt_tckmlcr INTO ls_ckmlcr INDEX 1.
+*--------------------------------------------------------------------*
+                            lv_stprs_act = ls_ckmlcr-pvprs."Periodic unit price
+                            lv_peinh_act = ls_ckmlcr-peinh.
+                            lv_waers_act = ls_ckmlcr-waers.
+                          ENDIF.
+                          CLEAR:ls_ckmlhd,ls_ckmlcr,ls_qbewh,ls_mbewh.
+                        ELSE."WBS DOES NOT Exist
+*Standard Cost
+*--------------------------------------------------------------------*
+                          READ TABLE lt_mbew INTO ls_mbew
+                                             WITH KEY matnr = ls_aufm-matnr
+                                                      bwkey = ls_aufm-werks
+                                                      bwtar = ls_aufm-bwtar
+                                                      lfgja = ls_aufm-budat+0(4)
+                                                      lfmon = ls_aufm-budat+4(2).
+                          IF sy-subrc <> 0.
+                            CLEAR lt_tmbewh.
+                            LOOP AT lt_mbewh INTO ls_mbewh
+                                             WHERE matnr EQ ls_aufm-matnr AND
+                                                   bwkey EQ ls_aufm-werks AND
+                                                   bwtar EQ ls_aufm-bwtar AND
+                                                   lfgja LE ls_aufm-budat+0(4).
+                              APPEND ls_mbewh TO lt_tmbewh.
+                              CLEAR ls_mbewh.
+                            ENDLOOP.
+                            DELETE lt_tmbewh WHERE lfgja EQ ls_aufm-budat+0(4) AND
+                                                   lfmon GT ls_aufm-budat+4(2).
+                            SORT lt_tmbewh BY lfgja DESCENDING lfmon DESCENDING.
+                            READ TABLE lt_tmbewh INTO ls_mbewh INDEX 1.
+                          ELSE.
+                            MOVE-CORRESPONDING ls_mbew TO ls_mbewh.
+                          ENDIF.
+*--------------------------------------------------------------------*
+                          IF ls_mbewh-vprsv = 'V'.
+                            lv_stprs_std = ls_mbewh-verpr."Moving Average Price/Periodic Unit Price
+                          ELSEIF ls_mbewh-vprsv = 'S'.
+                            lv_stprs_std = ls_mbewh-stprs."Standard price
+                          ENDIF.
+                          lv_peinh_std = ls_mbewh-peinh.
+                          lv_bklas     = ls_mbewh-bklas.
+*Actual Cost
+                          READ TABLE lt_ckmlhd INTO ls_ckmlhd
+                                              WITH KEY matnr = ls_aufm-matnr
+                                                       bwkey = ls_aufm-werks
+                                                       bwtar = ls_aufm-bwtar
+                                                       sobkz = ''
+                                                       pspnr = ''
+                                                       kzbws = ''.
+                          IF NOT ls_ckmlhd IS INITIAL.
+*--------------------------------------------------------------------*
+                            CLEAR:lt_tckmlcr,lv_poper.
+                            LOOP AT lt_ckmlcr INTO ls_ckmlcr
+                                              WHERE kalnr EQ ls_ckmlhd-kalnr AND
+                                                    bdatj LE ls_aufm-budat+0(4).
+                              APPEND ls_ckmlcr TO lt_tckmlcr.
+                              CLEAR ls_ckmlcr.
+                            ENDLOOP.
+                            lv_poper = ls_aufm-budat+4(2).
+                            DELETE lt_tckmlcr WHERE bdatj EQ ls_aufm-budat+0(4) AND
+                                                    poper GT lv_poper.
+                            SORT lt_tckmlcr BY bdatj DESCENDING poper DESCENDING.
+                            READ TABLE lt_tckmlcr INTO ls_ckmlcr INDEX 1.
+*--------------------------------------------------------------------*
+                            lv_stprs_act = ls_ckmlcr-pvprs."Periodic Unit Price
+                            lv_peinh_act = ls_ckmlcr-peinh.
+                            lv_waers_act = ls_ckmlcr-waers.
+                          ENDIF.
+                        ENDIF.
+*Cost Calculations
+                        ls_result-stprs         = ( lv_stprs_std / lv_peinh_std ).
+                        ls_result-prop_cost_std = ls_result-menge_prop * ( lv_stprs_std / lv_peinh_std ).
+                        ls_result-pup_price     = ( lv_stprs_act / lv_peinh_act ).
+                        ls_result-prop_cost_act = ls_result-menge_prop * ( lv_stprs_act / lv_peinh_act ).
+                        ls_result-currency      = lv_waers_act.
+*Mark Up%
+                        lv_markup = ls_result-markup = calculate_markup( is_aufm  = ls_aufm
+                                                                         iv_kunnr = ls_prps-zcustom ).
+*Amount to be recognized(Incl.Markup)
+                        CLEAR lv_resb_flag.
+                        READ TABLE lt_resb INTO ls_resb
+                                           WITH KEY rsnum = ls_aufm-rsnum
+                                                    rspos = ls_aufm-rspos.
+                        IF sy-subrc = 0 AND ls_resb-sanka IS INITIAL.
+                          lv_resb_flag = abap_true.
+                        ENDIF.
+                        ls_result-sanka = ls_resb-sanka.
+*Extract the 'Buffer fixed Price Quota' (this time it’s a fixed amount) in the separate column
+*we need to go through the following access sequence (only for HALB, FERT and SERV),
+*so only for the mat type in ZVV_PARAM- ZKROHRECOG_MATTYPE_DELETION)
+                        IF NOT lr_mtart_del IS INITIAL.
+                          IF NOT ls_mara-mtart IN lr_mtart_del.
+*Buffer Fixed Price Quota
+                            CALL METHOD me->product_price_wo_explosion_poc
+                              EXPORTING
+                                is_aufm       = ls_aufm
+                                iv_kunnr      = ls_prps-zcustom
+                              IMPORTING
+                                ev_amount     = lv_prod_price
+                                ev_kznep      = lv_kznep
+                                ev_cond_found = lv_cond_found.
+*Product Price w/o Explosion POC
+                            IF lv_prod_price <> 0.
+                              ls_result-product_price = lv_prod_price * ls_result-menge_prop.
+                              CLEAR:ls_result-prop_cost_std,ls_result-prop_cost_act.",ls_result-markup.ls_result-pup_price,
+                            ENDIF.
+*Check for Condition exclusion indicator
+                            IF NOT lv_kznep IS INITIAL OR NOT lv_resb_flag IS INITIAL.
+*--------------------------------------------------------------------*
+                              CLEAR:lrs_aufnr,ls_parent.
+                              lrs_aufnr-sign   = 'I'.
+                              lrs_aufnr-option = 'EQ'.
+                              lrs_aufnr-low    = ls_shadow-aufnr.
+                              APPEND lrs_aufnr TO lr_aufnr.
+                              ls_parent-aufnr = ls_shadow-aufnr.
+                              ls_parent-charg = ls_shadow-charg.
+                              APPEND ls_parent TO lt_parent.
+*--------------------------------------------------------------------*
+*                              lv_matnr_explode = ls_shadow-matnr.
+*                              lv_werks_explode = ls_shadow-werks.
+*                              lv_charg_explode = ls_shadow-charg.
+*                              DO.
+*                                READ TABLE lt_shadow INTO ls_shadow_top
+*                                                     WITH KEY type  = 'A'
+*                                                              matnr = lv_matnr_explode
+*                                                              werks = lv_werks_explode
+*                                                              charg = lv_charg_explode.
+*                                IF sy-subrc NE 0 AND ls_result-werks NE lv_werks_explode.
+*                                  READ TABLE lt_shadow INTO ls_shadow_top
+*                                                       WITH KEY type  = 'A'
+*                                                                matnr = lv_matnr_explode
+*                                                                werks = ls_result-werks
+*                                                                charg = lv_charg_explode.
+*                                ENDIF.
+*                                IF NOT ls_shadow_top IS INITIAL.
+*                                  CLEAR lrs_aufnr.
+*                                  lrs_aufnr-sign   = 'I'.
+*                                  lrs_aufnr-option = 'EQ'.
+*                                  lrs_aufnr-low    = ls_shadow_top-aufnr.
+*                                  lv_aufnr        = ls_shadow_top-aufnr.
+*                                  lv_matnr_lvl    = ls_shadow_top-matnr.
+*                                  lv_werks_lvl    = ls_shadow_top-werks.
+*                                  lv_charg_lvl    = ls_shadow_top-charg.
+*                                  APPEND lrs_aufnr TO lr_aufnr.
+*                                  LOOP AT lt_shadow INTO ls_shadow_top
+*                                                    WHERE aufnr EQ lv_aufnr.
+*                                    IF lv_matnr_lvl EQ ls_shadow_top-matnr AND
+*                                       lv_werks_lvl EQ ls_shadow_top-werks AND
+*                                       lv_charg_lvl EQ ls_shadow_top-charg .
+*                                      CONTINUE.
+*                                    ENDIF.
+*                                    READ TABLE lt_shadow INTO ls_shadow_level
+*                                                         WITH KEY type  = 'A'
+*                                                                  matnr = ls_shadow_top-matnr
+*                                                                  werks = ls_shadow_top-werks
+*                                                                  charg = ls_shadow_top-charg.
+*                                    IF sy-subrc = 0.
+*                                      CLEAR lrs_aufnr.
+*                                      lrs_aufnr-sign   = 'I'.
+*                                      lrs_aufnr-option = 'EQ'.
+*                                      lrs_aufnr-low    = ls_shadow_level-aufnr.
+*                                      APPEND lrs_aufnr TO lr_aufnr.
+*                                      lv_matnr_explode = ls_shadow_level-matnr.
+*                                      lv_werks_explode = ls_shadow_level-werks.
+*                                      lv_charg_explode = ls_shadow_level-charg.
+*                                      lv_valid_lvl = abap_true.
+*                                      EXIT.
+*                                    ENDIF.
+*                                  ENDLOOP.
+*                                  IF lv_valid_lvl IS INITIAL.
+*                                    EXIT.
+*                                  ENDIF.
+*                                ELSE.
+*                                  EXIT.
+*                                ENDIF.
+*                                CLEAR lv_valid_lvl.
+*                              ENDDO.
+                            ENDIF.
+                            ls_result-cond_found = lv_cond_found.
+                          ENDIF.
+                        ENDIF.
+*Amount to be recognized(Incl.Markup)
+*                  READ TABLE lt_resb INTO DATA(ls_resb)
+*                                     WITH KEY rsnum = ls_aufm-rsnum
+*                                              rspos = ls_aufm-rspos.
+*                  IF sy-subrc = 0 AND ls_resb-sanka IS INITIAL.
+                        IF NOT lv_resb_flag IS INITIAL.
+                        ELSE.
+*IF Product Price w/o Explosion POC is FOUND, Recog.Amount equals Condition Price
+                          IF lv_prod_price <> 0 OR NOT lv_cond_found IS INITIAL.
+                            IF lv_markup <> 0.
+                              ls_result-recog_amt = ls_result-product_price + ( ( ls_result-product_price * lv_markup ) / 100 ).
+                            ELSE.
+                              ls_result-recog_amt = ls_result-product_price.
+                            ENDIF.
+                          ELSE.
+                            IF ls_mara-mtart IN lr_mtart_del OR lv_bklas IN mrt_bklas.
+                              ls_result-recog_amt = ls_result-prop_cost_act + ( ( ls_result-prop_cost_act * lv_markup ) / 100 ).
+                            ENDIF.
+                          ENDIF.
+                        ENDIF.
+                      ENDIF.
+                      ls_result-budat = ls_aufm-budat.
+                      ls_result-monat = ls_aufm-budat+4(2).
+                      ls_result-gjahr = ls_aufm-budat+0(4).
+*Material Document Details
+                      ls_result-mblnr = ls_aufm-mblnr.
+                      ls_result-mjahr = ls_aufm-mjahr.
+                      ls_result-zeile = ls_aufm-zeile.
+                      ls_result-bwart = ls_aufm-bwart.
+
+                      APPEND ls_result TO lt_result_c.
+*Take all the WBS elements found in consumed material section with a
+*balance on ‘Amount to be recognized’ - Revenue Line Items
+                      IF NOT ls_prps IS INITIAL AND ls_result-recog_amt > 0.
+                        APPEND ls_prps TO lt_tprps.
+                      ENDIF.
+*Capture Line Index for Next Parameters
+                      IF lv_record_index < ls_result-record_index.
+                        lv_record_index = ls_result-record_index.
+                      ENDIF.
+
+                      CLEAR:ls_ckmlhd,ls_ckmlcr,ls_mbewh,ls_qbewh,ls_mbew,ls_prps,ls_mara,
+                            lv_stprs_std,lv_peinh_std,lv_stprs_act,lv_peinh_act,lv_prod_price,
+                            ls_result-prop_rate,ls_result-menge_prop,ls_result-stprs,lv_kznep,
+                            ls_result-prop_cost_std,ls_result-pup_price,ls_result-prop_cost_act,
+                            ls_result-markup,ls_result-recog_amt,ls_makt,ls_result-batch_reldate,
+                            ls_result-rel_text,ls_result-product_price,ls_resb,lv_markup,
+                            ls_result-cond_found,lv_cond_found,ls_result-sanka,lv_waers_act.
+                    ENDLOOP.
+*Check for further Explosion based on Top level Material/Batch
+                    READ TABLE lt_shadow INTO DATA(ls_shadow_top_exp)
+                                         WITH KEY type  = 'A'
+                                                  matnr = ls_shadow-matnr
+                                                  werks = ls_shadow-werks
+                                                  charg = ls_shadow-charg.
+                    IF sy-subrc = 0.
+                      CALL METHOD me->batch_line_explode
+                        EXPORTING
+                          is_shadow       = ls_shadow
+                          is_shadow_top   = ls_shadow_top_exp
+                          it_aufk         = lt_aufk
+                          it_afpo         = lt_afpo
+                          it_mara         = lt_mara
+                          it_makt         = lt_makt
+                          it_aufm         = lt_aufm
+                          it_prps         = lt_prps
+                          it_mbew         = lt_mbew
+                          it_mbewh        = lt_mbewh
+                          it_qbewh        = lt_qbewh
+                          it_ckmlhd       = lt_ckmlhd
+                          it_ckmlcr       = lt_ckmlcr
+                          it_resb         = lt_resb
+                          it_shadow       = lt_shadow
+                          it_result_prop  = lt_result_prop
+                          ir_bwart_gr     = lr_bwart_gr
+                          ir_bwart_gi     = lr_bwart_gi
+                          ir_mtart_del    = lr_mtart_del
+                          iv_main_index   = lv_main_index
+                          iv_record_index = ls_result-record_index
+                          iv_level        = ls_result-level
+                          iv_parent_rate  = lv_rate_mul
+                        IMPORTING
+                          et_parent       = lt_parent_exp
+                          et_result       = lt_result_exp.
+                      APPEND LINES OF:lt_parent_exp TO lt_parent,
+                                      lt_result_exp TO lt_result_c.
+                    ENDIF.
+                    CLEAR:ls_result,ls_aufk,ls_afpo,ls_shadow_top.
+                  ENDLOOP.
+                  CLEAR:lv_multi_record_index,lv_multi_record_level,lv_mrec_count.
+*                    ELSE.
+*                      EXIT.
+*                    ENDIF.
+*                  ENDDO.
+                ENDIF.
+              ENDIF.
+*End of Multi Batch Repeat Checks
+*--------------------------------------------------------------------*
+            ENDLOOP.
+            CLEAR:ls_shadow,lv_rate.  "lv_index,
+          ENDLOOP.
+          CLEAR:lt_shadow,lt_shadow_rev,lt_shadow_tot,lt_aufk,lt_afpo,
+                lt_aufm,lt_mara,lt_makt,lt_prps,lt_qbewh,lt_mbewh,
+                lt_ckmlhd,lt_ckmlcr,lt_mbew,ls_result,ls_qave,lv_kurztext.
+*If Condition exclusion indicator is FOUND all the below sub-levels must be set an 0 as amount to be recognized.
+*          IF NOT lr_aufnr IS INITIAL.
+*            SORT lr_aufnr.
+*            DELETE ADJACENT DUPLICATES FROM lr_aufnr COMPARING ALL FIELDS.
+*            LOOP AT lt_result_c ASSIGNING FIELD-SYMBOL(<fs_result>)
+*                                WHERE aufnr IN lr_aufnr.
+*              CLEAR <fs_result>-recog_amt.
+*            ENDLOOP.
+*          ENDIF.
+*Revenue Line Items
+*      IF NOT lt_tprps IS INITIAL.
+*        SORT lt_tprps.
+*        DELETE ADJACENT DUPLICATES FROM lt_tprps COMPARING pspnr.
+*        SELECT kokrs,belnr,buzei,wogbtr,mbgbtr,objnr,meinb,werks,
+*               matnr,bukrs,budat FROM covp INTO TABLE @DATA(lt_covp)
+*                                 FOR ALL ENTRIES IN @lt_tprps
+*                                 WHERE kokrs EQ @lt_tprps-pkokr AND
+*                                       objnr EQ @lt_tprps-objnr AND
+*                                       wrttp IN ('04','11')     AND
+*                                       versn EQ '000'           AND
+*                                       kstar IN @lr_kstar       AND
+*                                       budat IN @<fs_parameter>-r_exdate.
+*        IF NOT lt_covp IS INITIAL.
+*          SORT lt_covp BY objnr.
+**Material Data & Description
+*          SELECT matnr,mtart FROM mara INTO TABLE @lt_mara
+*                             FOR ALL ENTRIES IN @lt_covp
+*                             WHERE matnr = @lt_covp-matnr.
+*          IF NOT lt_mara IS INITIAL.
+*            SELECT matnr,spras,maktx FROM makt INTO TABLE @lt_makt
+*                                     FOR ALL ENTRIES IN @lt_mara
+*                                     WHERE matnr = @lt_mara-matnr.
+*          ENDIF.
+*
+*          ls_result-line_type = text-005. "Revenue Items
+*          lv_record_index     = lv_record_index + 1.
+*          LOOP AT lt_covp INTO DATA(ls_covp).
+**Header Record Index
+*            ls_result-main_index   = lv_main_index.
+**Item Record Index
+*            ls_result-record_index = lv_record_index.
+*
+*            READ TABLE lt_tprps INTO ls_prps
+*                                WITH KEY objnr = ls_covp-objnr.
+*            ls_result-pspnr_wbs = ls_prps-pspnr.
+*            ls_result-post1     = ls_prps-post1.
+*            ls_result-kunnr     = ls_prps-zcustom.
+*            ls_result-pspnr_prj = ls_prps-psphi.
+*            ls_result-bukrs     = ls_covp-bukrs.
+*            ls_result-werks     = ls_covp-werks.
+**Material Data & Description
+*            CLEAR ls_makt.
+*            READ TABLE lt_mara INTO ls_mara
+*                               WITH KEY matnr = ls_covp-matnr.
+*            READ TABLE lt_makt INTO ls_makt
+*                               WITH KEY matnr = ls_covp-matnr
+*                                        spras = 'E'.
+*            IF sy-subrc <> 0.
+*              READ TABLE lt_makt INTO ls_makt
+*                                 WITH KEY matnr = ls_covp-matnr.
+*            ENDIF.
+*            ls_result-matnr      = ls_covp-matnr.
+*            ls_result-maktx      = ls_makt-maktx.
+*            ls_result-mtart      = ls_mara-mtart.
+*            ls_result-menge_act  = ls_covp-mbgbtr * ( -1 ).
+*            ls_result-meins      = ls_covp-meinb.
+*            ls_result-budat      = ls_covp-budat.
+*            ls_result-monat      = ls_covp-budat+4(2).
+*            ls_result-gjahr      = ls_covp-budat+0(4).
+*            ls_result-rev_amount = ls_covp-wogbtr * ( -1 ).
+*            APPEND ls_result TO lt_result_r.
+*            CLEAR:ls_prps,ls_mara,ls_makt.
+*          ENDLOOP.
+*          CLEAR ls_result.
+*        ENDIF.
+*      ENDIF.
+
+*Filter Documents based on Material Type(If Selected)
+          IF NOT <fs_parameter>-r_mtart IS INITIAL.
+            DELETE:lt_result_c WHERE mtart NOT IN <fs_parameter>-r_mtart,
+                   lt_result_r WHERE mtart NOT IN <fs_parameter>-r_mtart.
+          ENDIF.
+
+**POC Calculated
+*      ls_result-line_type = text-006. "POC Calculated
+*      lv_record_index     = lv_record_index + 1.
+*      LOOP AT lt_tprps INTO ls_prps.
+**Header Record Index
+*        ls_result-main_index   = lv_main_index.
+**Item Record Index
+*        ls_result-record_index = lv_record_index.
+*
+*        ls_result-pspnr_wbs    = ls_prps-pspnr.
+*        ls_result-post1        = ls_prps-post1.
+*        ls_result-kunnr        = ls_prps-zcustom.
+*        ls_result-pspnr_prj    = ls_prps-psphi.
+*        ls_result-bukrs        = ls_prps-pbukr.
+*
+**Production Costs on WBS
+*        LOOP AT lt_result_c INTO DATA(ls_tresult)
+*                            WHERE pspnr_wbs = ls_prps-pspnr.
+*          lv_prd_cost = lv_prd_cost + ls_tresult-recog_amt.
+*        ENDLOOP.
+**Revenue on WBS
+*        LOOP AT lt_result_r INTO ls_tresult
+*                            WHERE pspnr_wbs = ls_prps-pspnr.
+*          lv_rev_cost = lv_rev_cost + ls_tresult-rev_amount.
+*        ENDLOOP.
+*        IF lv_rev_cost < 0.
+*          lv_rev_cost = lv_rev_cost * ( -1 ).
+*        ENDIF.
+**POC % for Recognition
+*        IF lv_prd_cost GE lv_rev_cost.
+*          ls_result-recog_poc = '100'.
+*        ELSE.
+*          IF lv_rev_cost <> 0.
+*            ls_result-recog_poc = ( lv_prd_cost * 100 ) / lv_rev_cost.
+*          ENDIF.
+*        ENDIF.
+*        APPEND ls_result TO lt_result_p.
+*        CLEAR:ls_result-recog_poc,lv_prd_cost,lv_rev_cost.
+*      ENDLOOP.
+*Collect All Lines together
+          APPEND LINES OF:lt_result_c TO lt_result,
+                          lt_result_r TO lt_result,
+                          lt_result_p TO lt_result.
+          CLEAR:lt_tprps,ls_result.
+        ENDLOOP.
+
+        IF lv_auth_error = abap_true AND NOT lt_result IS INITIAL.
+          MESSAGE i015(zi) WITH text-003.
+        ENDIF.
+
+        SORT lt_result BY main_index ASCENDING record_index ASCENDING.
+*If Condition exclusion indicator is FOUND all the below sub-levels must be set an 0 as amount to be recognized.
+        SORT lt_parent.
+        DELETE ADJACENT DUPLICATES FROM lt_parent.
+        LOOP AT lt_parent INTO ls_parent.
+          LOOP AT lt_result INTO ls_result
+                            WHERE aufnr = ls_parent-aufnr AND
+                                  charg = ls_parent-charg.
+            DATA(lv_tabix) = sy-tabix.
+            CLEAR lrs_charg.
+            lrs_charg-sign   = 'I'.
+            lrs_charg-option = 'EQ'.
+            lrs_charg-low    = ls_result-charg.
+            APPEND lrs_charg TO lr_charg.
+            DO.
+              lv_tabix = lv_tabix + 1.
+              READ TABLE lt_result ASSIGNING FIELD-SYMBOL(<fs_result>)
+                                   INDEX lv_tabix.
+              IF sy-subrc = 0 AND <fs_result>-charg_prd IN lr_charg.
+                CLEAR <fs_result>-recog_amt.
+                CLEAR lrs_charg.
+                lrs_charg-sign   = 'I'.
+                lrs_charg-option = 'EQ'.
+                lrs_charg-low    = <fs_result>-charg.
+                APPEND lrs_charg TO lr_charg.
+                SORT lr_charg.
+                DELETE ADJACENT DUPLICATES FROM lr_charg.
+              ELSE.
+                EXIT.
+              ENDIF.
+            ENDDO.
+            CLEAR:lr_charg,lv_tabix.
+          ENDLOOP.
+        ENDLOOP.
+      WHEN <fs_parameter>-p_rb2.
+*WBS Details
+        SELECT a~pspnr,a~post1,a~psphi,a~werks,a~pbukr,b~waers
+                                       INTO TABLE @DATA(lt_prps_tup)
+                                       FROM prps AS a INNER JOIN t001 AS b
+                                       ON a~pbukr = b~bukrs
+                                       WHERE a~pspnr IN @<fs_parameter>-r_pspnr AND
+                                             a~psphi IN @<fs_parameter>-r_psphi AND
+                                             a~werks IN @<fs_parameter>-r_werks AND
+                                             a~abgsl IN @mrt_abgsl.
+        CHECK NOT lt_prps_tup IS INITIAL.
+*Parent Lines in case of Intercompany
+        SELECT a~posnr,a~down,b~pbukr INTO TABLE @DATA(lt_prhi)
+                                      FROM prhi AS a INNER JOIN prps AS b
+                                      ON a~posnr = b~pspnr
+                                      FOR ALL ENTRIES IN @lt_prps_tup
+                                      WHERE a~down EQ @lt_prps_tup-pspnr.
+        SELECT a~posnr,a~down,b~pbukr APPENDING TABLE @lt_prhi
+                                      FROM prhi AS a INNER JOIN prps AS b
+                                      ON a~posnr = b~pspnr
+                                      FOR ALL ENTRIES IN @lt_prps_tup
+                                      WHERE a~posnr EQ @lt_prps_tup-pspnr.
+        IF NOT lt_prhi IS INITIAL.
+          SORT lt_prhi BY posnr.
+          DELETE ADJACENT DUPLICATES FROM lt_prhi COMPARING posnr.
+          SELECT a~pspnr,a~post1,a~psphi,a~werks,a~pbukr,b~waers
+                                         APPENDING TABLE @lt_prps_tup
+                                         FROM prps AS a INNER JOIN t001 AS b
+                                         ON a~pbukr = b~bukrs
+                                         FOR ALL ENTRIES IN @lt_prhi
+                                         WHERE pspnr = @lt_prhi-down.
+          SELECT pspnr,post1 FROM prps INTO TABLE @DATA(lt_prps_child)
+                                       FOR ALL ENTRIES IN @lt_prhi
+                                       WHERE pspnr = @lt_prhi-down.
+        ENDIF.
+        SORT lt_prps_tup BY pspnr.
+        DELETE ADJACENT DUPLICATES FROM lt_prps_tup COMPARING pspnr.
+*SAP Billing Plan details based on WBS
+        SELECT fplnr,pspnr FROM fpla INTO TABLE @DATA(lt_fpla)
+                                     FOR ALL ENTRIES IN @lt_prps_tup
+                                     WHERE pspnr = @lt_prps_tup-pspnr.
+        IF NOT lt_fpla IS INITIAL.
+          SELECT fplnr,fpltr,waers,fakwr FROM fplt INTO TABLE @DATA(lt_fplt)
+                                         FOR ALL ENTRIES IN @lt_fpla
+                                         WHERE fplnr = @lt_fpla-fplnr.
+        ENDIF.
+
+        LOOP AT lt_prps_tup INTO DATA(ls_prps_tup).
+*Check Parent Level - SKIP Non-IC Lines
+          READ TABLE lt_prhi INTO DATA(ls_prhi)
+                             WITH KEY down = ls_prps_tup-pspnr.
+          IF sy-subrc = 0 AND ls_prhi-pbukr <> ls_prps_tup-pbukr.
+            CONTINUE.
+          ENDIF.
+*Check Child Level
+          READ TABLE lt_prhi INTO ls_prhi
+                             WITH KEY posnr = ls_prps_tup-pspnr.
+          IF sy-subrc = 0.
+            READ TABLE lt_prps_child INTO DATA(ls_prps_child)
+                                     WITH KEY pspnr = ls_prhi-down.
+            IF sy-subrc = 0.
+              ls_result-pspnr_new = ls_prps_child-pspnr.
+              ls_result-post1_new = ls_prps_child-post1.
+*Assign Currency based on Intercompany Scenario
+              READ TABLE lt_prps_tup INTO DATA(ls_tprps)
+                                     WITH KEY pspnr = ls_prps_child-pspnr.
+              IF sy-subrc = 0.
+                ls_result-waers = ls_tprps-waers.
+                ls_result-bukrs = ls_tprps-pbukr.
+              ENDIF.
+            ELSE.
+              ls_result-pspnr_new = ls_prps_tup-pspnr.
+              ls_result-post1_new = ls_prps_tup-post1.
+              "ls_result-waers = ls_prps_tup-waers.
+              ls_result-bukrs = ls_prps_tup-pbukr.
+            ENDIF.
+          ENDIF.
+
+          ls_result-pspnr_wbs     = ls_prps_tup-pspnr.
+          ls_result-pspnr_prj     = ls_prps_tup-psphi.
+          ls_result-post1         = ls_prps_tup-post1.
+          ls_result-werks         = ls_prps_tup-werks.
+          IF ls_result-waers IS INITIAL.
+            ls_result-waers       = ls_prps_tup-waers.
+          ENDIF.
+          READ TABLE lt_fpla INTO DATA(ls_fpla) WITH KEY pspnr = ls_prps_tup-pspnr.
+          IF sy-subrc = 0.
+            READ TABLE lt_fplt INTO DATA(ls_fplt) WITH KEY fplnr = ls_fpla-fplnr.
+            IF sy-subrc = 0.
+              ls_result-amount_billplan = ls_fplt-fakwr.
+            ENDIF.
+          ENDIF.
+          APPEND ls_result TO lt_result.
+          CLEAR:ls_result,ls_fpla,ls_fplt,ls_tprps,ls_prps_child.
+        ENDLOOP.
+      WHEN <fs_parameter>-p_rb3.
+        SELECT * FROM zkcgt_wbs_recog INTO TABLE @DATA(lt_log)
+                                      WHERE ( pspnr         IN @<fs_parameter>-r_npspnr     OR
+                                            ( pspnr_new     IN @<fs_parameter>-r_npspnr     AND
+                                              pspnr         IN @<fs_parameter>-r_pspnr  ) ) AND
+                                              matnr         IN @<fs_parameter>-r_matnr      AND
+                                              werks         IN @<fs_parameter>-r_werks      AND
+                                              charg         IN @<fs_parameter>-r_charg      AND
+                                              amount_source IN @<fs_parameter>-r_amtsr      AND
+                                              ernam         IN @<fs_parameter>-r_ernam      AND
+                                              erdat         IN @<fs_parameter>-r_erdat      AND
+                                              status        IN @<fs_parameter>-r_status.
+        SORT lt_log.
+        lt_result = CORRESPONDING #( lt_log MAPPING pspnr_wbs = pspnr
+                                                    matnr_prd = matnr
+                                                    charg_prd = charg ).
+        IF NOT lt_result IS INITIAL.
+          SELECT pspnr,post1,psphi,werks,pbukr FROM prps INTO TABLE @lt_prps_tup
+                                              FOR ALL ENTRIES IN @lt_result
+                                              WHERE pspnr EQ @lt_result-pspnr_wbs OR
+                                                    pspnr EQ @lt_result-pspnr_new.
+          IF NOT lt_prps_tup IS INITIAL.
+            SELECT a~posnr,a~down,b~pbukr INTO TABLE @lt_prhi
+                               FROM prhi AS a INNER JOIN prps AS b
+                               ON a~down = b~pspnr
+                               FOR ALL ENTRIES IN @lt_prps_tup
+                               WHERE a~down EQ @lt_prps_tup-pspnr.
+          ENDIF.
+          LOOP AT lt_result ASSIGNING <fs_result>.
+            CLEAR ls_prps_tup.
+            READ TABLE lt_prps_tup INTO ls_prps_tup
+                                   WITH KEY pspnr = <fs_result>-pspnr_wbs.
+            IF sy-subrc = 0.
+              <fs_result>-pspnr_prj = ls_prps_tup-psphi.
+              <fs_result>-post1     = ls_prps_tup-post1.
+            ENDIF.
+*Check Parent Level - DELETE Non-IC Lines
+            READ TABLE lt_prhi INTO ls_prhi
+                               WITH KEY down = <fs_result>-pspnr_wbs.
+            IF sy-subrc = 0 AND ls_prhi-pbukr <> ls_prps_tup-pbukr.
+              DELETE lt_result WHERE pspnr_wbs = <fs_result>-pspnr_wbs.
+              CONTINUE.
+            ENDIF.
+*Parent
+            CLEAR ls_prps_tup.
+            READ TABLE lt_prps_tup INTO ls_prps_tup
+                                   WITH KEY pspnr = <fs_result>-pspnr_new.
+            IF sy-subrc = 0.
+              <fs_result>-post1_new = ls_prps_tup-post1.
+            ENDIF.
+            CLEAR ls_prhi.
+          ENDLOOP.
+        ENDIF.
     ENDCASE.
 
-*Set DEFAULT Layout variant for True-up and Display Options
-    IF <fs_parameter>-p_rb1 IS INITIAL.
-      CASE abap_true.
-        WHEN <fs_parameter>-p_rb2.  "True-up Cost Correction
-          lv_lookup_name = 'ZKROHRECOG_DEF_LAYOUT2'.
-        WHEN <fs_parameter>-p_rb3.  "Display History
-          lv_lookup_name = 'ZKROHRECOG_DEF_LAYOUT3'.
-        WHEN OTHERS.
-      ENDCASE.
-      SELECT SINGLE value1 FROM zvv_param INTO @cs_variant-variant
-                      WHERE lookup_name = @lv_lookup_name AND
-                            free_key    = 'VARIANT'       AND
-                            indicator1  = 'X'.
-    ENDIF.
+    et_result = lt_result.
 
   ENDMETHOD.
