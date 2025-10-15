@@ -1,87 +1,66 @@
-FUNCTION zpopup_table_disp_with_button.
-*"----------------------------------------------------------------------
-*"*"Local Interface:
-*"  IMPORTING
-*"     VALUE(IT_VALUE) TYPE  CRMT_IC_STRING_TAB
-*"     VALUE(IV_BUTTON1_TEXT) TYPE  CHAR30 OPTIONAL
-*"     VALUE(IV_BUTTON2_TEXT) TYPE  CHAR30 OPTIONAL
-*"     VALUE(IV_BUTTON3_TEXT) TYPE  CHAR30 OPTIONAL
-*"     VALUE(IV_BUTTON4_TEXT) TYPE  CHAR30 OPTIONAL
-*"     VALUE(IV_BUTTON5_TEXT) TYPE  CHAR30 OPTIONAL
-*"     VALUE(IV_ENDPOS_COL) TYPE  INT4 OPTIONAL
-*"     VALUE(IV_ENDPOS_ROW) TYPE  INT4 OPTIONAL
-*"     VALUE(IV_STARTPOS_COL) TYPE  INT4 OPTIONAL
-*"     VALUE(IV_STARTPOS_ROW) TYPE  INT4 OPTIONAL
-*"     VALUE(IV_TITLETEXT) TYPE  CHAR80
-*"  EXPORTING
-*"     REFERENCE(EV_INDEX) TYPE  SY-TABIX
-*"     REFERENCE(EV_ACTION) TYPE  INT4
-*"  EXCEPTIONS
-*"      NO_VALUE_TO_PRINT
-*"      NO_ACTION
-*"----------------------------------------------------------------------
+  METHOD zif_rfw_view_alv~get_alv_layout_attribute.
 
-  CLEAR: ev_index, ev_action,
-         gv_action, gv_index.
+    DATA:ls_custom_button TYPE zif_rfw_view_alv=>ts_custom_button,
+         lv_lookup_name   TYPE zlookup_name.
 
-  IF it_value IS INITIAL.
-    RAISE no_value_to_print.
-  ENDIF.
-  IF iv_button1_text IS INITIAL
-    AND iv_button2_text IS INITIAL
-    AND iv_button3_text IS INITIAL
-    AND iv_button4_text IS INITIAL
-    AND iv_button5_text IS INITIAL.
-    raise no_action.
-  ENDIF.
+    FIELD-SYMBOLS <fs_parameter>  TYPE ts_parameter.
 
-  gt_value = it_value.
-  gv_button1_text = iv_button1_text.
-  gv_button2_text = iv_button2_text.
-  gv_button3_text = iv_button3_text.
-  gv_button4_text = iv_button4_text.
-  gv_button5_text = iv_button5_text.
-  gv_title_text = iv_titletext.
+    ASSIGN is_parameter TO <fs_parameter>.
+    ASSERT <fs_parameter> IS ASSIGNED.
 
-  IF iv_startpos_col IS INITIAL.
-    iv_startpos_col = 10.
-  ENDIF.
-  IF iv_startpos_row IS INITIAL.
-    iv_startpos_row = 5.
-  ENDIF.
-
-  DESCRIBE TABLE gt_value LINES DATA(lv_rec_count).
-
-  IF iv_endpos_row IS INITIAL.
-    IF lv_rec_count > 20.
-      iv_endpos_row = iv_startpos_row + 20.
-    ELSE.
-      iv_endpos_row = iv_startpos_row + lv_rec_count + 1.
+    cv_variant_save_mode = zif_rfw_view_alv=>gc_variant_save_mode_global.
+*Exclude function buttons
+    CLEAR et_exclude_button.
+    APPEND:cl_gui_alv_grid=>mc_fc_loc_undo       TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_append_row TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_insert_row TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_delete_row TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_copy       TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_copy_row   TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_cut        TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_move_row   TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_paste      TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_loc_paste_new_row TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_average        TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_graph          TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_info           TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_refresh        TO et_exclude_button,
+           cl_gui_alv_grid=>mc_fc_check          TO et_exclude_button.
+*Do NOT Display Manage Layout option for Options 2 & 3
+    IF <fs_parameter>-p_rb1 IS INITIAL.
+      APPEND cl_gui_alv_grid=>mc_mb_variant TO et_exclude_button.
     ENDIF.
-  ENDIF.
 
-  DATA: lv_prev_length TYPE int4,
-        lv_length      TYPE int4.
+    CLEAR ls_custom_button.
+    CASE abap_true.
+      WHEN <fs_parameter>-p_rb1.  "Batch Production related
+        MOVE 'AUTO'         TO ls_custom_button-v_ucomm.
+        MOVE icon_bw_apd_db TO ls_custom_button-v_icon.
+        ls_custom_button-v_quickinfo = text-007.
+        ls_custom_button-v_text      = text-007.
+        APPEND ls_custom_button TO et_custom_button.
+      WHEN <fs_parameter>-p_rb2.  "True-up Cost Correction
+        MOVE 'MANUAL'        TO ls_custom_button-v_ucomm.
+        MOVE icon_write_file TO ls_custom_button-v_icon.
+        ls_custom_button-v_quickinfo = text-008.
+        ls_custom_button-v_text      = text-008.
+        APPEND ls_custom_button TO et_custom_button.
+      WHEN OTHERS.
+    ENDCASE.
 
-  IF iv_endpos_col IS INITIAL.
-    LOOP AT gt_value INTO DATA(lv_value).
-      lv_length = strlen( lv_value ).
-      IF lv_prev_length < lv_length.
-        lv_prev_length = lv_length.
-      ENDIF.
-    ENDLOOP.
-
-    IF lv_prev_length > 180.
-      iv_endpos_col = 180.
-    ELSE.
-      iv_endpos_col = lv_prev_length + iv_startpos_col.
+*Set DEFAULT Layout variant for True-up and Display Options
+    IF <fs_parameter>-p_rb1 IS INITIAL.
+      CASE abap_true.
+        WHEN <fs_parameter>-p_rb2.  "True-up Cost Correction
+          lv_lookup_name = 'ZKROHRECOG_DEF_LAYOUT2'.
+        WHEN <fs_parameter>-p_rb3.  "Display History
+          lv_lookup_name = 'ZKROHRECOG_DEF_LAYOUT3'.
+        WHEN OTHERS.
+      ENDCASE.
+      SELECT SINGLE value1 FROM zvv_param INTO @cs_variant-variant
+                      WHERE lookup_name = @lv_lookup_name AND
+                            free_key    = 'VARIANT'       AND
+                            indicator1  = 'X'.
     ENDIF.
-  ENDIF.
 
-  CALL SCREEN 0100 STARTING AT iv_startpos_col iv_startpos_row
-                   ENDING   AT iv_endpos_col iv_endpos_row.
-
-  ev_index = gv_index.
-  ev_action = gv_action.
-
-ENDFUNCTION.
+  ENDMETHOD.
