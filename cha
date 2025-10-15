@@ -1,27 +1,90 @@
-" If not intercompany, still perform FX conversion manually
-IF ls_data-amount_posting IS INITIAL.
-  " Perform FX conversion if currency differs
-  IF <fs_result>-waers <> ls_prps-waers.
+*----------------------------------------------------------------------*
+***INCLUDE LZLONZA_ALV_POPUPO01.
+*----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Module  STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE status_0100 OUTPUT.
+  SET PF-STATUS '100'.
+  SET TITLEBAR '100' WITH gv_title_text.
 
-    DATA(lv_exch_rate) = 0.
-    " Get exchange rate from TCURR
-    SELECT SINGLE ukurs INTO lv_exch_rate
-      FROM tcurr
-      WHERE fcurr = @<fs_result>-waers
-        AND tcurr = @ls_prps-waers
-        AND gdatu = @sy-datum.
+ENDMODULE.                 " STATUS_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  SCREEN_MODIFY_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE screen_modify_0100 OUTPUT.
 
-    IF sy-subrc = 0 AND lv_exch_rate > 0.
-      ls_data-amount_posting = <fs_result>-amount * lv_exch_rate.
-      ls_data-waers_posting  = ls_prps-waers.
-    ELSE.
-      " Default: no rate found, copy as is
-      ls_data-amount_posting = <fs_result>-amount.
-      ls_data-waers_posting  = <fs_result>-waers.
-    ENDIF.
-  ELSE.
-    " Same currency: no conversion needed
-    ls_data-amount_posting = <fs_result>-amount.
-    ls_data-waers_posting  = <fs_result>-waers.
-  ENDIF.
-ENDIF.
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'BUTTON1'.
+        IF gv_button1_text IS INITIAL.
+          screen-invisible = 1.
+        ENDIF.
+      WHEN 'BUTTON2'.
+        IF gv_button2_text IS INITIAL.
+          screen-invisible = 1.
+        ENDIF.
+      WHEN 'BUTTON3'.
+        IF gv_button3_text IS INITIAL.
+          screen-invisible = 1.
+        ENDIF.
+      WHEN 'BUTTON4'.
+        IF gv_button4_text IS INITIAL.
+          screen-invisible = 1.
+        ENDIF.
+      WHEN 'BUTTON5'.
+        IF gv_button5_text IS INITIAL.
+          screen-invisible = 1.
+        ENDIF.
+      WHEN OTHERS.
+    ENDCASE.
+
+    MODIFY SCREEN.
+  ENDLOOP.
+
+ENDMODULE.                 " SCREEN_MODIFY_0100  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  LISTPROCESSING  OUTPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE listprocessing OUTPUT.
+  LEAVE TO LIST-PROCESSING AND RETURN TO SCREEN 100.
+  LOOP AT gt_value INTO gv_value.
+    WRITE: / gv_value.
+    NEW-LINE.
+*    ULINE.
+  ENDLOOP.
+  SET CURSOR LINE 1.
+  LEAVE SCREEN.
+ENDMODULE.                 " LISTPROCESSING  OUTPUT
+*&---------------------------------------------------------------------*
+*&      Module  USER_COMMAND_0100  INPUT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+MODULE user_command_0100 INPUT.
+  CLEAR: gv_action.
+  CASE gv_ok_code.
+    WHEN 'BUT1'.
+      gv_action = 1.
+      LEAVE TO SCREEN 0.
+    WHEN 'BUT2'.
+      gv_action = 2.
+      LEAVE TO SCREEN 0.
+    WHEN 'BUT3'.
+      gv_action = 3.
+      LEAVE TO SCREEN 0.
+    WHEN 'BUT4'.
+      gv_action = 4.
+      LEAVE TO SCREEN 0.
+    WHEN 'BUT5'.
+      gv_action = 5.
+      LEAVE TO SCREEN 0.
+    WHEN OTHERS.
+  ENDCASE.
+ENDMODULE.                 " USER_COMMAND_0100  INPUT
