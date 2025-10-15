@@ -1,90 +1,87 @@
-*----------------------------------------------------------------------*
-***INCLUDE LZLONZA_ALV_POPUPO01.
-*----------------------------------------------------------------------*
-*&---------------------------------------------------------------------*
-*&      Module  STATUS_0100  OUTPUT
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-MODULE status_0100 OUTPUT.
-  SET PF-STATUS '100'.
-  SET TITLEBAR '100' WITH gv_title_text.
+FUNCTION zpopup_table_disp_with_button.
+*"----------------------------------------------------------------------
+*"*"Local Interface:
+*"  IMPORTING
+*"     VALUE(IT_VALUE) TYPE  CRMT_IC_STRING_TAB
+*"     VALUE(IV_BUTTON1_TEXT) TYPE  CHAR30 OPTIONAL
+*"     VALUE(IV_BUTTON2_TEXT) TYPE  CHAR30 OPTIONAL
+*"     VALUE(IV_BUTTON3_TEXT) TYPE  CHAR30 OPTIONAL
+*"     VALUE(IV_BUTTON4_TEXT) TYPE  CHAR30 OPTIONAL
+*"     VALUE(IV_BUTTON5_TEXT) TYPE  CHAR30 OPTIONAL
+*"     VALUE(IV_ENDPOS_COL) TYPE  INT4 OPTIONAL
+*"     VALUE(IV_ENDPOS_ROW) TYPE  INT4 OPTIONAL
+*"     VALUE(IV_STARTPOS_COL) TYPE  INT4 OPTIONAL
+*"     VALUE(IV_STARTPOS_ROW) TYPE  INT4 OPTIONAL
+*"     VALUE(IV_TITLETEXT) TYPE  CHAR80
+*"  EXPORTING
+*"     REFERENCE(EV_INDEX) TYPE  SY-TABIX
+*"     REFERENCE(EV_ACTION) TYPE  INT4
+*"  EXCEPTIONS
+*"      NO_VALUE_TO_PRINT
+*"      NO_ACTION
+*"----------------------------------------------------------------------
 
-ENDMODULE.                 " STATUS_0100  OUTPUT
-*&---------------------------------------------------------------------*
-*&      Module  SCREEN_MODIFY_0100  OUTPUT
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-MODULE screen_modify_0100 OUTPUT.
+  CLEAR: ev_index, ev_action,
+         gv_action, gv_index.
 
-  LOOP AT SCREEN.
-    CASE screen-name.
-      WHEN 'BUTTON1'.
-        IF gv_button1_text IS INITIAL.
-          screen-invisible = 1.
-        ENDIF.
-      WHEN 'BUTTON2'.
-        IF gv_button2_text IS INITIAL.
-          screen-invisible = 1.
-        ENDIF.
-      WHEN 'BUTTON3'.
-        IF gv_button3_text IS INITIAL.
-          screen-invisible = 1.
-        ENDIF.
-      WHEN 'BUTTON4'.
-        IF gv_button4_text IS INITIAL.
-          screen-invisible = 1.
-        ENDIF.
-      WHEN 'BUTTON5'.
-        IF gv_button5_text IS INITIAL.
-          screen-invisible = 1.
-        ENDIF.
-      WHEN OTHERS.
-    ENDCASE.
+  IF it_value IS INITIAL.
+    RAISE no_value_to_print.
+  ENDIF.
+  IF iv_button1_text IS INITIAL
+    AND iv_button2_text IS INITIAL
+    AND iv_button3_text IS INITIAL
+    AND iv_button4_text IS INITIAL
+    AND iv_button5_text IS INITIAL.
+    raise no_action.
+  ENDIF.
 
-    MODIFY SCREEN.
-  ENDLOOP.
+  gt_value = it_value.
+  gv_button1_text = iv_button1_text.
+  gv_button2_text = iv_button2_text.
+  gv_button3_text = iv_button3_text.
+  gv_button4_text = iv_button4_text.
+  gv_button5_text = iv_button5_text.
+  gv_title_text = iv_titletext.
 
-ENDMODULE.                 " SCREEN_MODIFY_0100  OUTPUT
-*&---------------------------------------------------------------------*
-*&      Module  LISTPROCESSING  OUTPUT
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-MODULE listprocessing OUTPUT.
-  LEAVE TO LIST-PROCESSING AND RETURN TO SCREEN 100.
-  LOOP AT gt_value INTO gv_value.
-    WRITE: / gv_value.
-    NEW-LINE.
-*    ULINE.
-  ENDLOOP.
-  SET CURSOR LINE 1.
-  LEAVE SCREEN.
-ENDMODULE.                 " LISTPROCESSING  OUTPUT
-*&---------------------------------------------------------------------*
-*&      Module  USER_COMMAND_0100  INPUT
-*&---------------------------------------------------------------------*
-*       text
-*----------------------------------------------------------------------*
-MODULE user_command_0100 INPUT.
-  CLEAR: gv_action.
-  CASE gv_ok_code.
-    WHEN 'BUT1'.
-      gv_action = 1.
-      LEAVE TO SCREEN 0.
-    WHEN 'BUT2'.
-      gv_action = 2.
-      LEAVE TO SCREEN 0.
-    WHEN 'BUT3'.
-      gv_action = 3.
-      LEAVE TO SCREEN 0.
-    WHEN 'BUT4'.
-      gv_action = 4.
-      LEAVE TO SCREEN 0.
-    WHEN 'BUT5'.
-      gv_action = 5.
-      LEAVE TO SCREEN 0.
-    WHEN OTHERS.
-  ENDCASE.
-ENDMODULE.                 " USER_COMMAND_0100  INPUT
+  IF iv_startpos_col IS INITIAL.
+    iv_startpos_col = 10.
+  ENDIF.
+  IF iv_startpos_row IS INITIAL.
+    iv_startpos_row = 5.
+  ENDIF.
+
+  DESCRIBE TABLE gt_value LINES DATA(lv_rec_count).
+
+  IF iv_endpos_row IS INITIAL.
+    IF lv_rec_count > 20.
+      iv_endpos_row = iv_startpos_row + 20.
+    ELSE.
+      iv_endpos_row = iv_startpos_row + lv_rec_count + 1.
+    ENDIF.
+  ENDIF.
+
+  DATA: lv_prev_length TYPE int4,
+        lv_length      TYPE int4.
+
+  IF iv_endpos_col IS INITIAL.
+    LOOP AT gt_value INTO DATA(lv_value).
+      lv_length = strlen( lv_value ).
+      IF lv_prev_length < lv_length.
+        lv_prev_length = lv_length.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_prev_length > 180.
+      iv_endpos_col = 180.
+    ELSE.
+      iv_endpos_col = lv_prev_length + iv_startpos_col.
+    ENDIF.
+  ENDIF.
+
+  CALL SCREEN 0100 STARTING AT iv_startpos_col iv_startpos_row
+                   ENDING   AT iv_endpos_col iv_endpos_row.
+
+  ev_index = gv_index.
+  ev_action = gv_action.
+
+ENDFUNCTION.
