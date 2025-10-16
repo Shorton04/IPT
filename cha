@@ -18,7 +18,9 @@ FUNCTION zlonza_alv_popup_table.
         lt_names   TYPE STANDARD TABLE OF zzs_alv_popup_names,
         ls_names   TYPE zzs_alv_popup_names,
         lv_choice  TYPE flag,
-        lt_result  TYPE REF TO data.       " temp result holder
+        lt_result  TYPE REF TO data,
+        lt_methods TYPE STANDARD TABLE OF string,
+        lv_method  TYPE string.
 
   FIELD-SYMBOLS: <lt_result> TYPE STANDARD TABLE.
 
@@ -27,7 +29,7 @@ FUNCTION zlonza_alv_popup_table.
     RETURN.
   ENDIF.
 
-  " Create popup
+  " Create popup instance
   CALL METHOD cl_reca_gui_f4_popup=>factory_grid
     EXPORTING
       it_f4value     = it_table
@@ -48,23 +50,25 @@ FUNCTION zlonza_alv_popup_table.
         id_text      = ls_names-heading.
   ENDLOOP.
 
-  " === Attempt to enable toolbar / OK button if supported ===
-  DATA: lv_method_name TYPE string.
-  LOOP AT VALUE stringtab( ( 'SET_OK_CODE_VISIBLE' ) ( 'SET_TOOLBAR_VISIBLE' ) ) INTO lv_method_name.
+  " === Try to show toolbar or OK button if supported ===
+  APPEND 'SET_OK_CODE_VISIBLE' TO lt_methods.
+  APPEND 'SET_TOOLBAR_VISIBLE' TO lt_methods.
+
+  LOOP AT lt_methods INTO lv_method.
     TRY.
-        CALL METHOD lo_popup->(lv_method_name)
+        CALL METHOD lo_popup->(lv_method)
           EXPORTING
             if_visible = abap_true.
-        EXIT. " Success - method found and executed
-      CATCH cx_sy_dyn_call_illegal_method INTO DATA(lx_illegal_method).
+        EXIT. " stop loop if one works
+      CATCH cx_sy_dyn_call_illegal_method.
         CONTINUE.
-      CATCH cx_sy_dyn_call_error INTO DATA(lx_illegal_param). " fallback for older systems
+      CATCH cx_sy_dyn_call_error.
         CONTINUE.
-      CATCH cx_root INTO DATA(lx_other).
+      CATCH cx_root.
         CONTINUE.
     ENDTRY.
   ENDLOOP.
-  " ===================================================================
+  " =====================================================
 
   " Prepare temporary result table
   CREATE DATA lt_result LIKE it_table.
