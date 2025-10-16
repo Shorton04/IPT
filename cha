@@ -18,8 +18,7 @@ FUNCTION zlonza_alv_popup_table.
         lt_names   TYPE STANDARD TABLE OF zzs_alv_popup_names,
         ls_names   TYPE zzs_alv_popup_names,
         lv_choice  TYPE flag,
-        lt_result  TYPE REF TO data,       " temp result holder
-        lv_title   TYPE c LENGTH 100.      " convert string to char
+        lt_result  TYPE REF TO data.       " temp result holder
 
   FIELD-SYMBOLS: <lt_result> TYPE STANDARD TABLE.
 
@@ -28,15 +27,12 @@ FUNCTION zlonza_alv_popup_table.
     RETURN.
   ENDIF.
 
-  " Convert title string to CHAR
-  lv_title = iv_title.
-
-  " Create popup instance
+  " Create popup instance (same as before)
   CALL METHOD cl_reca_gui_f4_popup=>factory_grid
     EXPORTING
       it_f4value     = it_table
       if_multi       = abap_false
-      value          = lv_title     " <-- Correct parameter name for S/4HANA
+      id_title       = iv_title
     RECEIVING
       ro_f4_instance = lo_popup.
 
@@ -52,23 +48,40 @@ FUNCTION zlonza_alv_popup_table.
         id_text      = ls_names-heading.
   ENDLOOP.
 
-  " === Try to enable toolbar / OK button if possible ===
+  " === Attempt to enable toolbar / OK button if supported by system ===
+  " Use dynamic CALL METHOD so code compiles on releases where method is not public/doesn't exist.
   DATA(lv_method) = 'SET_OK_CODE_VISIBLE'.
   TRY.
+      " try SET_OK_CODE_VISIBLE( if_visible = abap_true )
       CALL METHOD lo_popup->( lv_method )
         EXPORTING
           if_visible = abap_true.
     CATCH cx_sy_dyn_call_illegal_method INTO DATA(lx1).
+      " method does not exist / not accessible -> try alternative method name
+      lv_method = 'SET_TOOLBAR_VISIBLE'.
+      TRY.
+          CALL METHOD lo_popup->( lv_method )
+            EXPORTING
+              abap_true = abap_true. " dummy param name if required (will likely fail)
+        CATCH cx_sy_dyn_call_illegal_method INTO DATA(lx2).
+          " Both methods not available - ignore, continue with default popup behavior
+        CATCH cx_sy_dyn_call_illegal_param INTO DATA(lx3).
+          " parameter name mismatch - ignore
+      ENDTRY.
+    CATCH cx_sy_dyn_call_illegal_param INTO DATA(lx4).
+      " parameter name mismatch - try alternative method name
       lv_method = 'SET_TOOLBAR_VISIBLE'.
       TRY.
           CALL METHOD lo_popup->( lv_method )
             EXPORTING
               if_visible = abap_true.
-        CATCH cx_sy_dyn_call_illegal_method INTO DATA(lx2).
-          " Both methods not available, ignore
+        CATCH cx_sy_dyn_call_illegal_method INTO DATA(lx5).
+          " not available
+        CATCH cx_sy_dyn_call_illegal_param INTO DATA(lx6).
+          " not available
       ENDTRY.
   ENDTRY.
-  " ====================================================
+  " ===================================================================
 
   " Prepare temporary result table
   CREATE DATA lt_result LIKE it_table.
