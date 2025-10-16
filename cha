@@ -1,1 +1,1 @@
-https://drive.google.com/file/d/1x0Gr4t_P_OiVEfnbuaS9Rar-M0Rm4EUv/view?usp=drivesdk
+There isn’t really a similar button available in HANA that works the same way. If we try to customize and add our own check or OK button, it would interfere with the existing RE-FX logic since the popup behavior and toolbar (PF-STATUS) are tightly coupled with the RE-FX framework we’re currently using.
