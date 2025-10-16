@@ -1,1 +1,8 @@
-There isn’t really a similar button available in HANA that works the same way. If we try to customize and add our own check or OK button, it would interfere with the existing RE-FX logic since the popup behavior and toolbar (PF-STATUS) are tightly coupled with the RE-FX framework we’re currently using.
+Hi Oscar,
+
+There isn’t a similar or equivalent button available in S/4HANA that functions the same way as the missing OK button. The popup we are using is part of the RE-FX (Real Estate) package, and its toolbar (PF-STATUS) is tightly integrated with RE-FX logic. If we attempt to customize or manually add a check/OK button, it would affect the standard RE-FX functionality currently used by the program.
+
+If there are any additional requirements or enhancements outside of the current design — such as introducing new buttons or custom behavior — we will need to handle them under a separate ticket. The current ticket’s scope is limited to the lift-and-shift activity of the existing program to S/4HANA, and any additional changes would require extra effort and separate consideration.
+
+Best regards,
+[Your Name]
