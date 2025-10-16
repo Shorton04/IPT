@@ -1,7 +1,14 @@
-After lifting the current design to S/4HANA, there isn’t a similar or equivalent button available in S/4HANA that functions the same way as the missing OK button. The popup we are using is part of the RE-FX (Real Estate) package, and its toolbar (PF-STATUS) is tightly integrated with RE-FX logic. If we attempt to customize or manually add a check/OK button, it would affect the standard RE-FX functionality currently used by the program.
-
-If the OK or Check button is required, we would need to use another standard or a custom class that can fulfill the requirement. Alternatively, if a new popup is needed, it would require a new design and corresponding functionality to support it.
+After lifting the current design to S/4HANA, there isn’t a similar or equivalent button available in S/4HANA that functions the same way as the missing OK button. The popup we are using is part of the RE-FX (Real Estate) package, and its toolbar (PF-STATUS) is tightly integrated with RE-FX logic. If we attempt to customize or manually add a check/OK button, it would affect the standard RE-FX functionality currently used by the program. If the OK or Check button is required, we would need to modify the standard class currently used in the design. Alternatively, if a new popup is needed, it would require a new design and corresponding functionality to support it.
 
 Possible actions:
 	1.	Communicate to the business that the new standard functionality in S/4HANA is through double-click instead of an OK button.
-	2.	If the business prefers to retain a button-based approach, we can add a new Check/OK button using another standard or custom class, and this will require a new story/ticket, as it is outside the current lift-and-shift scope.
+	2.	If the business prefers to retain a button-based approach, we can add a new Check/OK button, which would require changing the current standard class. If a different popup behavior is needed, we can develop a new popup with its own design and logic — this will require a new story/ticket as it is outside the current lift-and-shift scope.
+
+
+Here’s my email
+
+My lead want, dont use modify the standard class but rather use another standard or customize class that may give the requirements.
+
+In 2. After the current standard class, put ‘and’ then next
+
+And the this will require a new story etc. will be next sentence 
