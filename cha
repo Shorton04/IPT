@@ -1,5 +1,1 @@
-The missing green OK button is not caused by our function module logic. The popup class CL_RECA_GUI_F4_POPUP we use is part of the RE-FX (Real Estate) package.
-
-In S/4HANA, RE-FX popup classes were refactored so their toolbar (PF-STATUS) and buttons like OK, Cancel, Select All, etc. are only initialized when used from inside RE-FX transactions.
-
-When called externally (like in our custom Z function module), the class no longer initializes its RE-FX PF-STATUS, so the OK button does not appear. This is confirmed by SAP KBA 3662958 and related note 3499220.”
+https://drive.google.com/file/d/1x0Gr4t_P_OiVEfnbuaS9Rar-M0Rm4EUv/view?usp=drivesdk
