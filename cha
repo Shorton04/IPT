@@ -1,10 +1,1 @@
-After lifting the current design to S/4HANA, the class previously used was moved from the RE-FX (Real Estate) package. Because of this, the standard button functionalities and PF-STATUS are no longer working as they did before.
-
-If the OK or Check button is required, we would need to modify the standard class currently used in the design. Alternatively, if a new popup is needed, it would require a new design and corresponding functionality to support it.
-
-Possible actions:
-	1.	Communicate to the business that the new standard functionality in S/4HANA is through double-click instead of an OK button.
-	2.	If the business prefers to retain a button-based approach, we can add a new Check/OK button, which would require changing the current standard class.
-	3.	If a different popup behavior is needed, we can develop a new popup with its own design and logic — this will require a new story/ticket as it is outside the current lift-and-shift scope.
-
-For reference, below is the knowledge base article for RE-FX and the related package details from T1Y and T30.
+There isn’t a similar or equivalent button available in S/4HANA that functions the same way as the missing OK button. The popup we are using is part of the RE-FX (Real Estate) package, and its toolbar (PF-STATUS) is tightly integrated with RE-FX logic. If we attempt to customize or manually add a check/OK button, it would affect the standard RE-FX functionality currently used by the program.
