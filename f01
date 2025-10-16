@@ -2,81 +2,127 @@ FUNCTION zlonza_alv_popup_table.
 *"----------------------------------------------------------------------
 *"*"Local Interface:
 *"  IMPORTING
-*"     REFERENCE(iv_start_col)   TYPE i DEFAULT 25
-*"     REFERENCE(iv_start_line)  TYPE i DEFAULT 6
-*"     REFERENCE(iv_end_col)     TYPE i DEFAULT 100
-*"     REFERENCE(iv_end_line)    TYPE i DEFAULT 10
-*"     REFERENCE(iv_title)       TYPE string DEFAULT 'ALV'
-*"     REFERENCE(it_field_names) TYPE STANDARD TABLE OPTIONAL
+*"     REFERENCE(iv_start_col)    TYPE i DEFAULT 25
+*"     REFERENCE(iv_start_line)   TYPE i DEFAULT 6
+*"     REFERENCE(iv_end_col)      TYPE i DEFAULT 100
+*"     REFERENCE(iv_end_line)     TYPE i DEFAULT 10
+*"     REFERENCE(iv_title)        TYPE string DEFAULT 'ALV'
+*"     REFERENCE(it_field_names)  TYPE STANDARD TABLE OPTIONAL
 *"     REFERENCE(if_show_toolbar) TYPE abap_bool DEFAULT abap_true
 *"  EXPORTING
-*"     REFERENCE(ev_choice)      TYPE flag
+*"     REFERENCE(ev_choice)       TYPE flag
 *"  CHANGING
-*"     REFERENCE(it_table)       TYPE STANDARD TABLE OPTIONAL
+*"     REFERENCE(it_table)        TYPE STANDARD TABLE OPTIONAL
 *"----------------------------------------------------------------------
 
-  DATA: lo_popup   TYPE REF TO cl_reca_gui_f4_popup,
-        lt_names   TYPE STANDARD TABLE OF zzs_alv_popup_names,
-        ls_names   TYPE zzs_alv_popup_names,
-        lv_choice  TYPE flag,
-        lt_result  TYPE REF TO data.  " temp result holder
+  DATA: lo_container TYPE REF TO cl_gui_dialogbox_container,
+        lo_alv       TYPE REF TO cl_salv_table,
+        lo_func      TYPE REF TO cl_salv_functions,
+        lo_display   TYPE REF TO cl_salv_display_settings,
+        lo_cols      TYPE REF TO cl_salv_columns_table,
+        lv_okcode    TYPE syucomm,
+        lv_exit      TYPE abap_bool VALUE abap_false.
 
-  FIELD-SYMBOLS: <lt_result> TYPE STANDARD TABLE.
+  FIELD-SYMBOLS: <lt_table> TYPE STANDARD TABLE.
 
-  " Safety check: table must not be initial
+  "----------------------------------------------------------------------
+  " Safety check
+  "----------------------------------------------------------------------
   IF it_table IS INITIAL.
+    MESSAGE 'No data available for popup display' TYPE 'I'.
     RETURN.
   ENDIF.
 
-  " Create popup
-  CALL METHOD cl_reca_gui_f4_popup=>factory_grid
+  "----------------------------------------------------------------------
+  " Create popup container with dynamic sizing
+  "----------------------------------------------------------------------
+  DATA(lv_width)  = iv_end_col - iv_start_col.
+  DATA(lv_height) = iv_end_line - iv_start_line.
+
+  CREATE OBJECT lo_container
     EXPORTING
-      it_f4value     = it_table
-      if_multi       = abap_false
-      id_title       = iv_title
-    RECEIVING
-      ro_f4_instance = lo_popup.
+      caption = iv_title
+      width   = lv_width
+      height  = lv_height
+      top     = iv_start_line
+      left    = iv_start_col.
 
-  CHECK lo_popup IS BOUND.
-
-  " Map field names to popup fields
-  MOVE-CORRESPONDING it_field_names TO lt_names.
-
-  LOOP AT lt_names INTO ls_names.
-    CALL METHOD lo_popup->set_field_text
-      EXPORTING
-        id_fieldname = ls_names-fieldname
-        id_text      = ls_names-heading.
-  ENDLOOP.
-
-  " Show/hide toolbar dynamically (green check, filter, etc.)
+  "----------------------------------------------------------------------
+  " Create SALV ALV inside popup
+  "----------------------------------------------------------------------
   TRY.
-      IF if_show_toolbar = abap_true.
-        lo_popup->set_toolbar_visible( abap_true ).
-      ELSE.
-        lo_popup->set_toolbar_visible( abap_false ).
-      ENDIF.
-    CATCH cx_sy_dyn_call_illegal_method.
-      " For older releases where the method might not exist
+      cl_salv_table=>factory(
+        EXPORTING
+          r_container  = lo_container
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = it_table
+      ).
+    CATCH cx_salv_msg INTO DATA(lx_msg).
+      MESSAGE lx_msg TYPE 'E'.
+      RETURN.
   ENDTRY.
 
-  " Prepare temporary result table
-  CREATE DATA lt_result LIKE it_table.
-  ASSIGN lt_result->* TO <lt_result>.
+  "----------------------------------------------------------------------
+  " Configure toolbar visibility
+  "----------------------------------------------------------------------
+  lo_func = lo_alv->get_functions( ).
+  IF if_show_toolbar = abap_true.
+    lo_func->set_all( abap_true ).
+  ELSE.
+    lo_func->set_all( abap_false ).
+  ENDIF.
 
+  "----------------------------------------------------------------------
+  " Configure display settings
+  "----------------------------------------------------------------------
+  lo_display = lo_alv->get_display_settings( ).
+  lo_display->set_list_header( iv_title ).
+  lo_display->set_striped_pattern( abap_true ).
+
+  "----------------------------------------------------------------------
+  " Auto-optimize columns
+  "----------------------------------------------------------------------
+  lo_cols = lo_alv->get_columns( ).
+  TRY.
+      lo_cols->set_optimize( abap_true ).
+    CATCH cx_salv_not_found.
+  ENDTRY.
+
+  "----------------------------------------------------------------------
   " Display popup
-  CALL METHOD lo_popup->display
-    EXPORTING
-      id_start_column = iv_start_col
-      id_start_line   = iv_start_line
-      id_end_column   = iv_end_col
-      id_end_line     = iv_end_line
-    IMPORTING
-      et_result       = <lt_result>
-      ef_cancelled    = lv_choice.
+  "----------------------------------------------------------------------
+  lo_alv->display( ).
 
-  " Assign result back to changing table
-  it_table = <lt_result>.
-  ev_choice = lv_choice.
+  "----------------------------------------------------------------------
+  " Wait for user interaction (OK / Close)
+  "----------------------------------------------------------------------
+  WHILE lv_exit = abap_false.
+    CALL METHOD cl_gui_cfw=>flush.
+    CALL METHOD cl_gui_cfw=>get_new_ok_code
+      IMPORTING
+        new_code = lv_okcode.
+
+    CASE lv_okcode.
+      WHEN 'BACK' OR 'CANC' OR 'EXIT' OR 'CLOSE'.
+        ev_choice = space.
+        lv_exit = abap_true.
+      WHEN 'OK' OR 'ENTER'.
+        ev_choice = 'X'.
+        lv_exit = abap_true.
+      WHEN OTHERS.
+        " do nothing
+    ENDCASE.
+
+    WAIT UP TO 1 SECONDS.
+  ENDWHILE.
+
+  "----------------------------------------------------------------------
+  " Free container resources
+  "----------------------------------------------------------------------
+  IF lo_container IS BOUND.
+    CALL METHOD lo_container->free.
+  ENDIF.
 
 ENDFUNCTION.
