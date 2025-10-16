@@ -2,55 +2,108 @@ FUNCTION zlonza_alv_popup_table.
 *"----------------------------------------------------------------------
 *"*"Local Interface:
 *"  IMPORTING
-*"     REFERENCE(IV_START_COL) TYPE  I DEFAULT 25
-*"     REFERENCE(IV_START_LINE) TYPE  I DEFAULT 6
-*"     REFERENCE(IV_END_COL) TYPE  I DEFAULT 100
-*"     REFERENCE(IV_END_LINE) TYPE  I DEFAULT 10
-*"     REFERENCE(IV_TITLE) TYPE  STRING DEFAULT 'ALV'
+*"     REFERENCE(iv_start_col)  TYPE i DEFAULT 25
+*"     REFERENCE(iv_start_line) TYPE i DEFAULT 6
+*"     REFERENCE(iv_end_col)    TYPE i DEFAULT 100
+*"     REFERENCE(iv_end_line)   TYPE i DEFAULT 10
+*"     REFERENCE(iv_title)      TYPE string DEFAULT 'ALV'
+*"     REFERENCE(it_field_names) TYPE STANDARD TABLE OPTIONAL
 *"  EXPORTING
-*"     REFERENCE(EV_CHOICE) TYPE  FLAG
-*"  TABLES
-*"      IT_TABLE TYPE  STANDARD TABLE OPTIONAL
-*"      IT_FIELD_NAMES TYPE STANDARD TABLE OPTIONAL
+*"     REFERENCE(ev_choice)     TYPE flag
+*"  CHANGING
+*"     REFERENCE(it_table)      TYPE STANDARD TABLE OPTIONAL
 *"----------------------------------------------------------------------
 
-  DATA:lo_popup  TYPE REF TO cl_reca_gui_f4_popup,
-       lt_names  TYPE STANDARD TABLE OF zzs_alv_popup_names,
-       ls_names  TYPE zzs_alv_popup_names,
-       lv_choice TYPE flag.
+  DATA: lo_container TYPE REF TO cl_gui_dialogbox_container,
+        lo_alv       TYPE REF TO cl_salv_table,
+        lv_answer    TYPE c LENGTH 1,
+        lv_width     TYPE i,
+        lv_height    TYPE i,
+        lv_left      TYPE i,
+        lv_top       TYPE i.
 
-  CHECK it_table IS INITIAL.
+  " Calculate popup size and position
+  lv_left   = iv_start_col.
+  lv_top    = iv_start_line.
+  lv_width  = iv_end_col - iv_start_col.
+  lv_height = iv_end_line - iv_start_line.
 
-  CALL METHOD cl_reca_gui_f4_popup=>factory_grid
-    EXPORTING
-      it_f4value     = it_table[]
-      if_multi       = abap_false
-      id_title       = iv_title
-    RECEIVING
-      ro_f4_instance = lo_popup.
+  " Safety check
+  IF it_table IS INITIAL.
+    MESSAGE 'No data to display in popup.' TYPE 'I'.
+    RETURN.
+  ENDIF.
 
-  CHECK lo_popup IS BOUND.
+  " Create popup container
+  TRY.
+      CREATE OBJECT lo_container
+        EXPORTING
+          width   = lv_width
+          height  = lv_height
+          top     = lv_top
+          left    = lv_left
+          caption = iv_title.
+    CATCH cx_root INTO DATA(lx_container).
+      MESSAGE lx_container->get_text( ) TYPE 'E'.
+      RETURN.
+  ENDTRY.
 
-  MOVE-CORRESPONDING it_field_names[] TO lt_names.
+  " Create ALV grid inside popup container
+  TRY.
+      cl_salv_table=>factory(
+        EXPORTING
+          r_container  = lo_container
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = it_table ).
+    CATCH cx_salv_msg INTO DATA(lx_salv).
+      MESSAGE lx_salv->get_text( ) TYPE 'E'.
+      RETURN.
+  ENDTRY.
 
-  LOOP AT lt_names INTO ls_names.
-    CALL METHOD lo_popup->set_field_text
-      EXPORTING
-        id_fieldname = ls_names-fieldname
-        id_text      = ls_names-heading.
+  " Apply column headings if provided
+  DATA: lo_cols TYPE REF TO cl_salv_columns_table,
+        lo_col  TYPE REF TO cl_salv_column_table,
+        ls_name TYPE zzs_alv_popup_names.
+
+  lo_cols = lo_alv->get_columns( ).
+
+  LOOP AT it_field_names INTO ls_name.
+    TRY.
+        lo_col = lo_cols->get_column( ls_name-fieldname ).
+        lo_col->set_short_text( ls_name-heading ).
+        lo_col->set_medium_text( ls_name-heading ).
+        lo_col->set_long_text( ls_name-heading ).
+      CATCH cx_salv_not_found.
+        CONTINUE.
+    ENDTRY.
   ENDLOOP.
 
-  CALL METHOD lo_popup->display
-    EXPORTING
-      id_start_column = iv_start_col
-      id_start_line   = iv_start_line
-      id_end_column   = iv_end_col
-      id_end_line     = iv_end_line
-    IMPORTING
-      et_result       = it_table[]
-      ef_cancelled    = lv_choice.
+  " Display ALV
+  lo_alv->display( ).
 
-  ev_choice = lv_choice.
+  " Display OK/Cancel confirmation popup (green OK button)
+  CALL FUNCTION 'POPUP_TO_CONFIRM'
+    EXPORTING
+      titlebar             = iv_title
+      text_question        = 'Confirm selection?'
+      text_button_1        = 'OK'
+      text_button_2        = 'Cancel'
+      default_button       = '1'
+      display_cancel_button = space
+    IMPORTING
+      answer               = lv_answer.
+
+  IF lv_answer = '1'.
+    ev_choice = abap_true.
+  ELSE.
+    ev_choice = abap_false.
+  ENDIF.
+
+  " Cleanup
+  IF lo_container IS BOUND.
+    CALL METHOD lo_container->free.
+  ENDIF.
 
 ENDFUNCTION.
-
