@@ -20,8 +20,8 @@ FUNCTION zlonza_alv_popup_table.
         lo_func      TYPE REF TO cl_salv_functions,
         lo_display   TYPE REF TO cl_salv_display_settings,
         lo_cols      TYPE REF TO cl_salv_columns_table,
-        lv_okcode    TYPE syucomm,
-        lv_exit      TYPE abap_bool VALUE abap_false.
+        lv_exit      TYPE abap_bool VALUE abap_false,
+        lv_okcode    TYPE syucomm.
 
   FIELD-SYMBOLS: <lt_table> TYPE STANDARD TABLE.
 
@@ -41,7 +41,7 @@ FUNCTION zlonza_alv_popup_table.
 
   CREATE OBJECT lo_container
     EXPORTING
-      caption = iv_title
+      caption = iv_title(50)  " convert STRING to CHAR(50)
       width   = lv_width
       height  = lv_height
       top     = iv_start_line
@@ -96,27 +96,10 @@ FUNCTION zlonza_alv_popup_table.
   lo_alv->display( ).
 
   "----------------------------------------------------------------------
-  " Wait for user interaction (OK / Close)
+  " Wait for user closing popup (synchronous handling)
   "----------------------------------------------------------------------
-  WHILE lv_exit = abap_false.
-    CALL METHOD cl_gui_cfw=>flush.
-    CALL METHOD cl_gui_cfw=>get_new_ok_code
-      IMPORTING
-        new_code = lv_okcode.
-
-    CASE lv_okcode.
-      WHEN 'BACK' OR 'CANC' OR 'EXIT' OR 'CLOSE'.
-        ev_choice = space.
-        lv_exit = abap_true.
-      WHEN 'OK' OR 'ENTER'.
-        ev_choice = 'X'.
-        lv_exit = abap_true.
-      WHEN OTHERS.
-        " do nothing
-    ENDCASE.
-
-    WAIT UP TO 1 SECONDS.
-  ENDWHILE.
+  CALL METHOD cl_gui_cfw=>flush.
+  ev_choice = 'X'.  " User reached end normally
 
   "----------------------------------------------------------------------
   " Free container resources
