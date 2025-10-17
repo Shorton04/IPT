@@ -12,35 +12,58 @@ FORM display_alv.
 
   TRY.
       " Create SALV table
-      cl_salv_table=>factory(
+      CALL METHOD cl_salv_table=>factory
         IMPORTING
           r_salv_table = lo_alv
         CHANGING
-          t_table      = lt_alv_display ).
+          t_table      = lt_alv_display.
 
-      " --- Set a simple title
+      " --- Set a simple title (compatible way)
       lv_title = |Report { sy-repid } - ALV Output|.
-      lo_alv->set_screen_title( lv_title ).
+      lo_alv->set_list_header( lv_title ).
 
       " --- Get column settings
-      lo_columns = lo_alv->get_columns( ).
-      lo_columns->set_optimize( abap_true ).
+      CALL METHOD lo_alv->get_columns
+        RECEIVING
+          value = lo_columns.
+
+      CALL METHOD lo_columns->set_optimize
+        EXPORTING
+          value = abap_true.
 
       " --- Optional: Rename 'BETR1' column
       TRY.
-          lo_column = lo_columns->get_column( 'BETR1' ).
-          lo_column->set_short_text( 'Amount' ).
-          lo_column->set_medium_text( 'Amount' ).
-          lo_column->set_long_text( 'Amount in Local Currency' ).
-      CATCH cx_salv_not_found.
+          CALL METHOD lo_columns->get_column
+            EXPORTING
+              columnname = 'BETR1'
+            RECEIVING
+              value      = lo_column.
+
+          CALL METHOD lo_column->set_short_text
+            EXPORTING
+              value = 'Amount'.
+
+          CALL METHOD lo_column->set_medium_text
+            EXPORTING
+              value = 'Amount'.
+
+          CALL METHOD lo_column->set_long_text
+            EXPORTING
+              value = 'Amount in Local Currency'.
+        CATCH cx_salv_not_found.
       ENDTRY.
 
-      " --- Enable ALV standard toolbar functions
-      lo_functions = lo_alv->get_functions( ).
-      lo_functions->set_all( abap_true ).
+      " --- Enable all standard toolbar functions
+      CALL METHOD lo_alv->get_functions
+        RECEIVING
+          value = lo_functions.
 
-      " --- Finally display the ALV
-      lo_alv->display( ).
+      CALL METHOD lo_functions->set_all
+        EXPORTING
+          value = abap_true.
+
+      " --- Display ALV
+      CALL METHOD lo_alv->display.
 
     CATCH cx_salv_msg INTO DATA(lx).
       MESSAGE lx->get_text( ) TYPE 'E'.
