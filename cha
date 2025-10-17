@@ -1,14 +1,726 @@
-After lifting the current design to S/4HANA, there isn’t a similar or equivalent button available in S/4HANA that functions the same way as the missing OK button. The popup we are using is part of the RE-FX (Real Estate) package, and its toolbar (PF-STATUS) is tightly integrated with RE-FX logic. If we attempt to customize or manually add a check/OK button, it would affect the standard RE-FX functionality currently used by the program. If the OK or Check button is required, we would need to modify the standard class currently used in the design. Alternatively, if a new popup is needed, it would require a new design and corresponding functionality to support it.
+REPORT zfv00159 MESSAGE-ID zkha.
 
-Possible actions:
-	1.	Communicate to the business that the new standard functionality in S/4HANA is through double-click instead of an OK button.
-	2.	If the business prefers to retain a button-based approach, we can add a new Check/OK button, which would require changing the current standard class. If a different popup behavior is needed, we can develop a new popup with its own design and logic — this will require a new story/ticket as it is outside the current lift-and-shift scope.
+TABLES: acdoca,
+        faglflext_bck,
+        bkpf,
+        ska1,
+        skb1,
+        t001,
+        tzun,
+        t9f14.
+
+TYPES: BEGIN OF ts_stab,
+         rbukrs TYPE acdoca-rbukrs,
+         prctr  TYPE acdoca-prctr,
+         fruni  TYPE t9f14-fr_unit,
+         racct  TYPE acdoca-racct,
+         rmvct  TYPE acdoca-rmvct,
+         rassc  TYPE acdoca-rassc,
+         pprctr TYPE acdoca-pprctr,
+         hsl    TYPE acdoca-hsl,
+       END OF ts_stab.
+
+TYPES: BEGIN OF ts_alv_display,
+         ryear  TYPE acdoca-ryear,
+         rbukrs TYPE acdoca-rbukrs,
+         prctr  TYPE acdoca-prctr,
+         fruni  TYPE t9f14-fr_unit,
+         rmvct  TYPE acdoca-rmvct,
+         racct  TYPE acdoca-racct,
+         rassc  TYPE acdoca-rassc,
+         pprctr TYPE acdoca-pprctr,
+         betr1  TYPE acdoca-hsl,
+       END OF ts_alv_display.
+
+DATA: lo_alv     TYPE REF TO cl_salv_table.
+DATA: lt_stab TYPE STANDARD TABLE OF ts_stab,
+      ls_stab TYPE ts_stab.
+
+DATA: lt_alv_display TYPE STANDARD TABLE OF ts_alv_display,
+      ls_alv_display TYPE ts_alv_display.
+
+DATA: send_length   TYPE i,
+      send_type     TYPE char10 VALUE 'ASC',
+      z_datei       TYPE string,
+      return_length TYPE i,
+      file_length   TYPE i,
+      swvbund,
+      swkonto,
+      sw_prot,
+      monat(02),
+      zumsav        LIKE faglflext_bck-hslvt,
+      sum           LIKE acdoca-hsl,
+      betr1         LIKE acdoca-hsl,
+      betrc(15),
+      betrp2        TYPE p DECIMALS 2,
+      betrp5        TYPE p DECIMALS 5,
+      BEGIN OF zlsatz OCCURS 100,
+        rec(71),
+      END OF zlsatz,
+      zbukrs(4) TYPE c,
+      zkonto(6) TYPE c,
+      zsubrc    LIKE sy-subrc,
+      lv_konts  TYPE saknr,
+      lv_ktopl  TYPE ktopl,
+      lv_gvtyp  TYPE gvtyp,
+
+      BEGIN OF frkey,
+        rbukrs TYPE acdoca-rbukrs,
+        prctr  TYPE acdoca-prctr,
+        fruni  TYPE t9f14-fr_unit,
+        racct  TYPE acdoca-racct,
+        rmvct  TYPE acdoca-rmvct,
+        rassc  TYPE acdoca-rassc,
+        pprctr TYPE acdoca-pprctr,
+      END   OF frkey,
+
+      BEGIN OF dlsatz,
+        rbukrs(04),
+        tren1(01)  VALUE ';',
+        prctr(10),
+        tren2(01)  VALUE ';',
+        fruni(08),
+        tren3(01)  VALUE ';',
+        racct(06),
+        tren4(01)  VALUE ';',
+        rmvct(03),
+        tren5(01)  VALUE ';',
+        rassc(06),
+        tren6(01)  VALUE ';',
+        pprctr(10),
+        tren7(01)  VALUE ';',
+        vorz1(01),
+        betr1(15)  TYPE n,
+      END   OF dlsatz.
+
+CLEAR lt_stab.
+FIELD-SYMBOLS: <feld>.
+
+**********************************************************************
+** Begin of Global data declaration for Schedule Manager Monitoring
+** Refer to Note 325118 for any details or change
+**********************************************************************
+DATA: gs_key     LIKE schedman_key.
+DATA: gv_aplstat    LIKE smmain-aplstat VALUE '0'.
+DATA: lv_open    TYPE flag.
+DATA: gv_auth_check TYPE boolean.
+DATA: lt_bapiret LIKE bapireturn,
+      lt_account LIKE bapi3006_2,
+      lv_file    TYPE char15.
+
+CONSTANTS:    lc_hfm  TYPE char50 VALUE '\\chvsap150.saplonza.net\FDMshare\FDMEE\inbox\'.
+
+**********************************************************************
+** End of Global data declaration for Schedule Manager Monitoring Note 325118
+**********************************************************************
+
+SELECTION-SCREEN BEGIN OF BLOCK allg WITH FRAME TITLE TEXT-010.
+  PARAMETERS:      rldnr TYPE acdoca-rldnr DEFAULT '0L'.
+  SELECT-OPTIONS:  frnu FOR t9f14-fr_unit,
+                   rbukrs FOR acdoca-rbukrs,
+                   bupe FOR bkpf-budat+4(2) DEFAULT 01 TO 12,
+                   ryear FOR acdoca-ryear NO-EXTENSION NO INTERVALS.
+  PARAMETERS:      divi(7) TYPE n DEFAULT '1000'.
+
+SELECTION-SCREEN: END OF BLOCK allg.
+
+SELECTION-SCREEN BEGIN OF BLOCK fi WITH FRAME TITLE TEXT-011.
+  SELECT-OPTIONS:  racct FOR acdoca-racct,
+                   prctr FOR acdoca-prctr.
+  PARAMETERS: dlpc,
+              dlbwa.
+  SELECT-OPTIONS:  bskz FOR skb1-zuawa,
+                   eskz FOR skb1-zuawa.
+  SELECT-OPTIONS:  rfarea FOR acdoca-rfarea,
+                   elic  FOR acdoca-rfarea.
+SELECTION-SCREEN: END OF BLOCK fi.
+
+SELECTION-SCREEN  BEGIN OF BLOCK list WITH FRAME TITLE TEXT-006.
+  PARAMETERS:       list RADIOBUTTON GROUP p DEFAULT 'X'.
+  SELECTION-SCREEN SKIP.
+  SELECTION-SCREEN  BEGIN OF LINE.
+    PARAMETERS:       down RADIOBUTTON GROUP p.
+    SELECTION-SCREEN  COMMENT 2(57) TEXT-008 FOR FIELD datei.
+    PARAMETERS:       datei TYPE string DEFAULT 'c:\temp\fibu\hfm\HFM.dat'.
+  SELECTION-SCREEN  END OF LINE.
+  SELECTION-SCREEN SKIP.
+  SELECTION-SCREEN  BEGIN OF LINE.
+    PARAMETERS:       dlhfm RADIOBUTTON GROUP p.
+    SELECTION-SCREEN  COMMENT 2(52) TEXT-009 FOR FIELD p_loc.
+    PARAMETERS:       p_loc TYPE char12.
+  SELECTION-SCREEN  END OF LINE.
+SELECTION-SCREEN: END OF BLOCK list.
+
+FIELD-GROUPS:     header,
+                  satz.
+
+INSERT
+    frkey frkey-racct
+    frkey-rbukrs
+    frkey-prctr
+    frkey-fruni
+    frkey-rmvct
+    frkey-rassc
+    frkey-pprctr
+INTO
+    header.
+
+INSERT
+    betr1
+INTO
+    satz.
+
+***********************************************************************
+*  INITIALIZATION                                                     *
+***********************************************************************
+INITIALIZATION.
+
+  GET PARAMETER ID 'BUK' FIELD rbukrs-low.
+  IF rbukrs-low IS NOT INITIAL.
+    rbukrs-sign = 'I'.
+    rbukrs-option = 'EQ'.
+    APPEND rbukrs.
+  ENDIF.
+
+  ryear-low    = sy-datum(4).
+  ryear-option = 'EQ'.
+  ryear-sign   = 'I'.
+  APPEND ryear.
+
+AT SELECTION-SCREEN ON divi.
+  IF divi CO '0'.
+    MESSAGE e600 WITH 'bitte numerischen Wert eingeben'(013).
+  ENDIF.
+
+AT SELECTION-SCREEN ON bskz.
+  IF bskz-sign IS INITIAL OR
+     bskz-sign EQ 'I'.
+  ELSE.
+    MESSAGE e600 WITH 'nur INCL ist als Selekt-Option erlaubt'(005).
+  ENDIF.
+
+AT SELECTION-SCREEN ON eskz.
+  IF eskz-sign IS INITIAL OR
+   eskz-sign EQ 'E'.
+  ELSE.
+    MESSAGE e600 WITH 'nur EXCL ist als Selekt-Option erlaubt'(006).
+  ENDIF.
+
+AT SELECTION-SCREEN ON p_loc.
+  IF dlhfm = 'X'.
+    IF p_loc IS INITIAL.
+      MESSAGE e600 WITH 'bitte eine Location eingeben!'(016).
+    ENDIF.
+  ENDIF.
+
+**************** START-OF-SELECTION ************************************
+START-OF-SELECTION.
+
+  PERFORM open_schedman.
+
+  PERFORM processing.
+
+  SORT BY frkey-rbukrs frkey-racct frkey-rmvct frkey-prctr
+          frkey-fruni frkey-rassc frkey-pprctr frkey.
+
+  LOOP.
+
+    AT NEW frkey-racct.
+      swkonto = 'A'.
+    ENDAT.
+
+    AT END OF frkey.
+
+      IF down = 'X' OR dlhfm = 'X'.
+        MOVE  frkey-rassc  TO  dlsatz-rassc.
+        PERFORM ausgeben.
+      ELSE.
+        IF sum(betr1) NE 0.
+
+          IF frkey-fruni IS INITIAL.
+            WRITE: / ryear-low,
+                     frkey-rbukrs,
+                     frkey-prctr,
+                     TEXT-005.
+          ENDIF.
+
+          swkonto = 'E'.
+          PERFORM append_alv_data.
+
+        ENDIF.
+      ENDIF.
+
+    ENDAT.
+
+    AT END OF frkey-racct.
+
+      IF list = 'X' AND swkonto = 'E'.
+      ENDIF.
+
+    ENDAT.
+
+    AT LAST.
+
+      IF down = 'X' OR dlhfm = 'X'.
+        PERFORM download.
+      ELSE.
+      ENDIF.
+
+    ENDAT.
+
+  ENDLOOP.
+
+  IF list = 'X' AND down NE 'X' AND dlhfm NE 'X'.
+    PERFORM display_alv.
+  ENDIF.
+
+  PERFORM close_schedman USING sy-subrc.
+
+* processing
+FORM processing.
+
+  SELECT * FROM acdoca
+       WHERE ryear  IN ryear
+       AND   rldnr  =  rldnr
+       AND   rbukrs IN rbukrs
+       AND   prctr  IN prctr.
+
+    AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+             ID 'BUKRS' FIELD acdoca-rbukrs
+             ID 'ACTVT' FIELD '01'.
+    IF sy-subrc <> 0.
+      gv_auth_check = abap_true.
+      CONTINUE.
+    ENDIF.
+
+    IF dlbwa = ' '.
+      IF NOT acdoca-rmvct IS INITIAL.
+        acdoca-rmvct = space.
+      ENDIF.
+    ENDIF.
+
+    ON CHANGE OF acdoca-rbukrs.
+      SELECT SINGLE * FROM t001 WHERE bukrs EQ acdoca-rbukrs.
+    ENDON.
+
+    SELECT SINGLE * FROM ska1
+             WHERE ktopl = t001-ktopl
+             AND   saknr = acdoca-racct.
+    IF sy-subrc NE 0.
+      WRITE: TEXT-002,
+             t001-ktopl,
+             acdoca-racct.
+      REJECT.
+    ENDIF.
+
+    SELECT SINGLE * FROM skb1
+             WHERE bukrs = acdoca-rbukrs
+             AND   saknr = acdoca-racct.
+    IF sy-subrc NE 0.
+      WRITE: TEXT-002,
+             acdoca-rbukrs,
+             acdoca-racct.
+      REJECT.
+    ENDIF.
+
+    PERFORM selection.
+
+  ENDSELECT.
+
+  IF gv_auth_check = abap_true.
+    MESSAGE TEXT-051 TYPE 'I'.
+  ENDIF.
+  CLEAR: gv_auth_check.
+
+ENDFORM.
+
+* Selection
+FORM selection.
+
+  CLEAR t9f14.
+  MOVE: acdoca-ryear TO t9f14-gjahr,
+        acdoca-rbukrs TO t9f14-bukrs,
+        acdoca-prctr TO t9f14-prctr.
+
+  READ TABLE t9f14.
+
+  CHECK frnu.
+
+  IF sy-subrc NE 0.
+    MOVE: '999999'     TO t9f14-vbund,
+          '9999999999' TO t9f14-prctr.
+
+  ENDIF.
+
+  swvbund = 'A'.
+  MOVE skb1-zuawa TO tzun-zuawa.
+
+  READ TABLE tzun.
+
+  IF sy-subrc = 0.
+    IF ska1-xbilk = 'X'.
+      LOOP AT bskz.
+        CHECK bskz.
+        swvbund = 'E'.
+      ENDLOOP.
+    ELSE.
+      LOOP AT eskz.
+        CHECK eskz.
+        swvbund = 'E'.
+      ENDLOOP.
+    ENDIF.
+  ELSE.
+    WRITE: TEXT-003,
+           skb1-bukrs,
+           skb1-saknr,
+           skb1-zuawa.
+    REJECT.
+  ENDIF.
+
+  IF swvbund = 'A'.
+    CLEAR: acdoca-rassc, acdoca-pprctr.
+  ELSE.
+    IF acdoca-rassc IS INITIAL.
+      CLEAR acdoca-pprctr.
+    ENDIF.
+  ENDIF.
+
+  READ TABLE bupe INDEX 1.
+
+  zumsav = faglflext_bck-hslvt.
+
+  sum = acdoca-hsl.
+
+  MOVE-CORRESPONDING acdoca TO frkey.
+  MOVE: t9f14-fr_unit TO frkey-fruni.
+
+  betr1 = zumsav + sum.
+
+  IF dlpc NE 'X'.
+    frkey-prctr = space.
+  ENDIF.
+
+  IF ( down = 'X' OR dlhfm = 'X' ).
+    SELECT SINGLE * FROM ska1
+             WHERE ktopl = t001-ktopl
+             AND   saknr = acdoca-racct
+             AND   xbilk  = ' '.
+    IF sy-subrc = 0.
+      IF acdoca-racct NOT BETWEEN '0000915001' AND '0000915098'.
+        frkey-rmvct = '999'.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+  IF frkey-racct IN racct.
+    EXTRACT satz.
+  ENDIF.
+
+  SELECT SINGLE * FROM ska1
+           WHERE ktopl = t001-ktopl
+           AND   saknr = acdoca-racct.
+
+  IF sy-subrc = 0 AND ska1-xbilk = 'X' AND NOT
+    acdoca-racct = '0000188367'.
+  ELSE.
+    IF acdoca-racct = '0000188367'.
+      frkey-rmvct = '999'.
+    ENDIF.
+    IF NOT acdoca-rfarea IS INITIAL.
+      CHECK rfarea.
+      IF acdoca-rfarea IN elic.
+        frkey-rassc  = space.
+        frkey-pprctr = space.
+      ELSE.
+        IF frkey-rassc = space.
+          frkey-pprctr = space.
+        ENDIF.
+      ENDIF.
+
+      frkey-racct = acdoca-rfarea.
+      EXTRACT satz.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+FORM append_alv_data.
+  CLEAR ls_alv_display.
+
+  ls_alv_display-ryear  = ryear-low.
+  ls_alv_display-rbukrs = frkey-rbukrs.
+  ls_alv_display-prctr  = frkey-prctr.
+  ls_alv_display-fruni  = frkey-fruni.
+  ls_alv_display-rmvct  = frkey-rmvct.
+  ls_alv_display-racct  = frkey-racct.
+  ls_alv_display-rassc  = frkey-rassc.
+  ls_alv_display-pprctr = frkey-pprctr.
+  ls_alv_display-betr1  = sum.
 
 
-Here’s my email
+  APPEND ls_alv_display TO lt_alv_display.
 
-My lead want, dont use modify the standard class but rather use another standard or customize class that may give the requirements.
 
-In 2. After the current standard class, put ‘and’ then next
 
-And the this will require a new story etc. will be next sentence 
+ENDFORM.
+
+
+FORM display_alv.
+
+*  DATA: lt_fieldcat TYPE lvc_t_fcat,
+*        ls_fieldcat TYPE lvc_s_fcat,
+*        lt_exclude  TYPE ui_functions,
+*        lv_rc       TYPE sysubrc.
+
+  PERFORM append_alv_data.
+
+  CALL METHOD cl_salv_table=>factory(
+    EXPORTING
+      list_display = abap_false
+    IMPORTING
+      r_salv_table = lo_alv
+    CHANGING
+      t_table      = lt_alv_display ).
+
+  lo_alv->display( ).
+
+ENDFORM.
+
+* write download
+FORM ausgeben.
+
+  IF sum(betr1) = 0.
+    EXIT.
+  ENDIF.
+
+  IF frkey-fruni IS INITIAL.
+    WRITE: / ryear-low,
+             frkey-rbukrs,
+             frkey-prctr,
+             TEXT-005.
+  ENDIF.
+
+  MOVE:  frkey-rbukrs      TO  dlsatz-rbukrs,
+         frkey-prctr       TO  dlsatz-prctr,
+         frkey-fruni       TO  dlsatz-fruni,
+         frkey-rmvct       TO  dlsatz-rmvct,
+         frkey-rassc       TO  dlsatz-rassc,
+         frkey-pprctr      TO  dlsatz-pprctr.
+
+  IF NOT frkey-prctr IS INITIAL.
+    SHIFT dlsatz-prctr LEFT DELETING LEADING ' 0'.
+  ENDIF.
+
+  IF NOT frkey-pprctr IS INITIAL.
+    SHIFT dlsatz-pprctr LEFT DELETING LEADING ' 0'.
+  ENDIF.
+
+  IF frkey-racct+4(6) NE space.
+    MOVE frkey-racct+4(6)  TO  dlsatz-racct.
+  ELSE.
+    MOVE frkey-racct(4)    TO  dlsatz-racct.
+  ENDIF.
+
+  IF sum(betr1) < 0.
+    dlsatz-vorz1 = '-'.
+  ELSE.
+    dlsatz-vorz1 = '+'.
+  ENDIF.
+
+  WRITE sum(betr1) TO betrc
+                      USING EDIT MASK 'RR______________'
+                      NO-SIGN.
+
+  IF divi NE 0.
+    betrp5 = betrc / ( divi * 100 ).
+    WRITE betrp5 TO betrc
+                 USING EDIT MASK 'RR______________'
+                 NO-SIGN.
+  ELSE.
+    betrp2 = betrc / 100.
+    WRITE betrp2 TO betrc
+                 USING EDIT MASK 'RR______________'
+                 NO-SIGN.
+  ENDIF.
+
+  MOVE: betrc   TO dlsatz-betr1,
+        dlsatz  TO zlsatz.
+
+  REPLACE '+' WITH ' ' INTO zlsatz.
+
+  IF divi NE 0.
+    SHIFT zlsatz+65(6) RIGHT.
+    MOVE '.' TO zlsatz+65(1).
+  ELSE.
+    SHIFT zlsatz+68(1) RIGHT.
+    MOVE '.' TO zlsatz+68(3).
+  ENDIF.
+
+  APPEND zlsatz.
+
+ENDFORM.
+
+FORM download.
+
+  DATA: lv_filepath         TYPE zfile.
+
+  IF sy-batch IS INITIAL AND
+    dlhfm NE 'X'.
+
+    send_type = 'ASC'.
+
+    z_datei = datei.
+    CLEAR file_length.
+    CALL FUNCTION 'GUI_DOWNLOAD'
+      EXPORTING
+        bin_filesize        = send_length
+        codepage            = ' '
+        filename            = z_datei
+        filetype            = send_type
+        wk1_n_format        = ' '
+        wk1_n_size          = ' '
+        wk1_t_format        = ' '
+        wk1_t_size          = ' '
+      IMPORTING
+        filelength          = return_length
+      TABLES
+        data_tab            = zlsatz
+      EXCEPTIONS
+        file_open_error     = 1
+        file_write_error    = 2
+        invalid_filesize    = 3
+        invalid_table_width = 4
+        invalid_type        = 5
+        no_batch            = 6
+        unknown_error       = 7
+        OTHERS              = 8.
+    IF sy-subrc = 0.
+      WRITE: / TEXT-021.
+    ELSE.
+      MESSAGE e600 WITH TEXT-023 sy-subrc TEXT-024.
+    ENDIF.
+  ELSE.
+
+    IF dlhfm = 'X'.
+      SELECT SINGLE low FROM tvarvc INTO lv_file
+        WHERE name = 'ZFV00159_FILE'.
+
+      IF sy-subrc NE 0.
+
+        IF sy-sysid = 'P10'.
+          lv_file = '\SAP.DAT'.
+        ELSE.
+          lv_file = '\TESTSAP.DAT'.
+        ENDIF.
+      ENDIF.
+
+      CONCATENATE lc_hfm p_loc lv_file INTO lv_filepath.
+    ELSE.
+      lv_filepath = datei.
+    ENDIF.
+
+    SKIP.
+    TRANSLATE lv_filepath TO LOWER CASE.
+    OPEN DATASET lv_filepath FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+    IF sy-subrc NE 0.
+      MESSAGE e600 WITH TEXT-020.
+    ELSE.
+
+      LOOP AT zlsatz.
+        TRANSFER zlsatz TO lv_filepath.
+      ENDLOOP.
+
+      IF sy-subrc = 0.
+        WRITE: / TEXT-021.
+      ELSE.
+        WRITE: / TEXT-022.
+      ENDIF.
+    ENDIF.
+
+    CLOSE DATASET lv_filepath.
+
+  ENDIF.
+ENDFORM.
+
+FORM open_schedman .
+
+  DATA: ls_detail   LIKE schedman_detail_user,
+        lt_select   TYPE TABLE OF schedman_selkrit,
+        ls_select   LIKE schedman_selkrit,
+        lt_rsparams TYPE TABLE OF rsparams,
+        ls_rsparams TYPE rsparams.
+
+  CLEAR ls_detail.
+  ls_detail-repid    = sy-repid.
+  ls_detail-activity = '16'.
+  ls_detail-testflag = ' '.
+
+  REFRESH: lt_select, lt_select.
+
+  CALL FUNCTION 'RS_REFRESH_FROM_SELECTOPTIONS'
+    EXPORTING
+      curr_report     = sy-repid
+    TABLES
+      selection_table = lt_rsparams
+    EXCEPTIONS
+      not_found       = 1
+      no_report       = 2
+      OTHERS          = 3.
+  IF sy-subrc <> 0.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  LOOP AT lt_rsparams INTO ls_rsparams.
+    CLEAR: ls_select.
+    CHECK NOT ls_rsparams-low IS INITIAL OR
+          NOT ls_rsparams-high IS INITIAL .
+    MOVE-CORRESPONDING ls_rsparams TO ls_select.
+    MOVE ls_rsparams-selname TO ls_select-field.
+    MOVE ls_rsparams-option TO ls_select-optio.
+    CASE ls_rsparams-selname.
+      WHEN 'BUKRS'.
+        ls_select-structure = 'FAGLFLEXT'.
+        ls_select-field = 'RBUKRS'.
+      WHEN 'BUPE'.
+        ls_select-structure = 'RFPDO2'.
+        ls_select-field = 'SBWAPERA'.
+      WHEN 'RYEAR'.
+        ls_select-structure = 'FAGLFLEXT'.
+        ls_select-field = 'RYEAR'.
+      WHEN OTHERS.    CONTINUE.
+    ENDCASE.
+    APPEND ls_select TO lt_select.
+  ENDLOOP.
+
+  CALL FUNCTION 'KPEP_MONI_INIT_RECORD'
+    EXPORTING
+      ls_detail  = ls_detail
+    IMPORTING
+      ls_key     = gs_key
+    TABLES
+      lt_selkrit = lt_select.
+
+  COMMIT WORK.
+
+ENDFORM.
+
+FORM close_schedman USING p_subrc.
+
+  IF sy-batch IS NOT INITIAL .
+    IF p_subrc NE 0.
+      gv_aplstat = 4.
+    ENDIF.
+
+    CALL FUNCTION 'KPEP_MONI_CLOSE_RECORD'
+      EXPORTING
+        ls_key      = gs_key
+      CHANGING
+        ld_aplstat  = gv_aplstat
+      EXCEPTIONS
+        no_id_given = 1
+        OTHERS      = 2.
+
+    COMMIT WORK.
+  ENDIF.
+ENDFORM.
