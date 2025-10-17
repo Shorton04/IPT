@@ -1,10 +1,11 @@
 FORM display_alv.
 
-  DATA: lv_title     TYPE lvc_title,
-        lo_columns   TYPE REF TO cl_salv_columns_table,
-        lo_column    TYPE REF TO cl_salv_column_table,
-        lo_functions TYPE REF TO cl_salv_functions_list,
-        lo_display   TYPE REF TO cl_salv_display_settings.
+  DATA: lo_alv        TYPE REF TO cl_salv_table,
+        lo_columns    TYPE REF TO cl_salv_columns_table,
+        lo_column     TYPE REF TO cl_salv_column_table,
+        lo_functions  TYPE REF TO cl_salv_functions_list,
+        lo_top        TYPE REF TO cl_salv_form_layout_grid,
+        lo_label      TYPE REF TO cl_salv_form_label.
 
   IF lt_alv_display IS INITIAL.
     MESSAGE 'No data to display.' TYPE 'I'.
@@ -12,61 +13,40 @@ FORM display_alv.
   ENDIF.
 
   TRY.
-      " Create SALV object
+      " --- Create SALV table
       CALL METHOD cl_salv_table=>factory
         IMPORTING
           r_salv_table = lo_alv
         CHANGING
           t_table      = lt_alv_display.
 
-      " --- Set ALV Title using top-of-list
-      lv_title = |Report { sy-repid } - ALV Output|.
-      CALL METHOD lo_alv->set_top_of_list
-        EXPORTING
-          value = lv_title.
+      " --- Create Top-of-List header
+      lo_top = cl_salv_form_layout_grid=>create( ).
+      lo_label = cl_salv_form_label=>create( |Report { sy-repid } - ALV Output| ).
+      lo_top->add_row( ).
+      lo_top->add_label( lo_label ).
 
-      " --- Column settings
-      CALL METHOD lo_alv->get_columns
-        RECEIVING
-          value = lo_columns.
+      lo_alv->set_top_of_list( lo_top ).
 
-      CALL METHOD lo_columns->set_optimize
-        EXPORTING
-          value = abap_true.
+      " --- Get Columns and optimize
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
 
       " --- Rename column 'BETR1' (if exists)
       TRY.
-          CALL METHOD lo_columns->get_column
-            EXPORTING
-              columnname = 'BETR1'
-            RECEIVING
-              column      = lo_column.
-
-          CALL METHOD lo_column->set_short_text
-            EXPORTING
-              value = 'Amount'.
-
-          CALL METHOD lo_column->set_medium_text
-            EXPORTING
-              value = 'Amount'.
-
-          CALL METHOD lo_column->set_long_text
-            EXPORTING
-              value = 'Amount in Local Currency'.
+          lo_column = lo_columns->get_column( 'BETR1' ).
+          lo_column->set_short_text( 'Amount' ).
+          lo_column->set_medium_text( 'Amount' ).
+          lo_column->set_long_text( 'Amount in Local Currency' ).
         CATCH cx_salv_not_found.
       ENDTRY.
 
-      " --- Enable all toolbar functions
-      CALL METHOD lo_alv->get_functions
-        RECEIVING
-          value = lo_functions.
-
-      CALL METHOD lo_functions->set_all
-        EXPORTING
-          value = abap_true.
+      " --- Enable toolbar buttons
+      lo_functions = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
 
       " --- Display ALV
-      CALL METHOD lo_alv->display.
+      lo_alv->display( ).
 
     CATCH cx_salv_msg INTO DATA(lx).
       MESSAGE lx->get_text( ) TYPE 'E'.
