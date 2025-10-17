@@ -19,24 +19,24 @@ FORM display_alv .
       lo_display->set_list_header( 'FAGLFLEXT → HFM Report Output' ).
       lo_display->set_striped_pattern( abap_true ).
 
-      " Enable all ALV functions
+      " Enable all toolbar functions
       lo_functions = lo_alv->get_functions( ).
       lo_functions->set_all( abap_true ).
 
-      " Optimize columns
+      " Optimize column width
       lo_columns = lo_alv->get_columns( ).
       lo_columns->set_optimize( abap_true ).
 
-      " Set column text for BETR1 (Amount)
+      " Set proper column header text for BETR1
       TRY.
-          DATA(lo_column) = lo_columns->get_column( columnname = 'BETR1' ).
+          lo_column = lo_columns->get_column( columnname = 'BETR1' ).
           lo_column->set_short_text( 'Amount' ).
           lo_column->set_medium_text( 'Amount' ).
           lo_column->set_long_text( 'Balance Amount' ).
         CATCH cx_salv_not_found.
       ENDTRY.
 
-      " Add total for BETR1
+      " Add total aggregation
       lo_aggregs = lo_alv->get_aggregations( ).
       TRY.
           lo_aggregs->add_aggregation( 'BETR1' ).
