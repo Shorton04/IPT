@@ -1,111 +1,77 @@
-"! SALV OM Consumer class for a table-like data display (2-dimensional).
-CLASS cl_salv_table DEFINITION
-  PUBLIC
-  FINAL
-  CREATE PRIVATE .
+FORM display_alv.
 
-  PUBLIC SECTION.
+  DATA: lv_title     TYPE lvc_title,
+        lo_columns   TYPE REF TO cl_salv_columns_table,
+        lo_column    TYPE REF TO cl_salv_column_table,
+        lo_functions TYPE REF TO cl_salv_functions_list,
+        lo_display   TYPE REF TO cl_salv_display_settings.
 
-    INTERFACES if_salv_gui_om_table_info .
-    INTERFACES if_salv_gui_om_table_action .
-    INTERFACES if_salv_gui_om_model_info .
-    INTERFACES if_salv_gui_om_display_object .
+  IF lt_alv_display IS INITIAL.
+    MESSAGE 'No data to display.' TYPE 'I'.
+    RETURN.
+  ENDIF.
 
-    ALIASES close_screen
-      FOR if_salv_gui_om_table_action~close_screen .
-    ALIASES display
-      FOR if_salv_gui_om_table_action~display .
-    ALIASES extended_grid_api
-      FOR if_salv_gui_om_table_info~extended_grid_api .
-    ALIASES get_aggregations
-      FOR if_salv_gui_om_table_info~get_aggregations .
-    ALIASES get_columns
-      FOR if_salv_gui_om_table_info~get_columns .
-    ALIASES get_display_object
-      FOR if_salv_gui_om_table_info~get_display_type .
-    ALIASES get_display_settings
-      FOR if_salv_gui_om_table_info~get_display_settings .
-    ALIASES get_end_of_list
-      FOR if_salv_gui_om_table_info~get_end_of_list .
-    ALIASES get_end_of_list_height
-      FOR if_salv_gui_om_table_info~get_end_of_list_height .
-    ALIASES get_end_of_list_print
-      FOR if_salv_gui_om_table_info~get_end_of_list_print .
-    ALIASES get_event
-      FOR if_salv_gui_om_table_info~get_event .
-    ALIASES get_filters
-      FOR if_salv_gui_om_table_info~get_filters .
-    ALIASES get_functional_settings
-      FOR if_salv_gui_om_table_info~get_functional_settings .
-    ALIASES get_functions
-      FOR if_salv_gui_om_table_info~get_functions .
-    ALIASES get_layout
-      FOR if_salv_gui_om_table_info~get_layout .
-    "all inherited methods from cl_salv_model, cl_salv_model_base and cl_salv_model_List
-    ALIASES get_metadata
-      FOR if_salv_gui_om_table_info~get_metadata .
-    ALIASES get_print
-      FOR if_salv_gui_om_table_info~get_print .
-    ALIASES get_screen_popup
-      FOR if_salv_gui_om_table_action~get_screen_popup .
-    ALIASES get_screen_status
-      FOR if_salv_gui_om_table_info~get_screen_status .
-    ALIASES get_selections
-      FOR if_salv_gui_om_table_info~get_selections .
-    ALIASES get_sorts
-      FOR if_salv_gui_om_table_info~get_sorts .
-    ALIASES get_top_of_list
-      FOR if_salv_gui_om_table_info~get_top_of_list .
-    ALIASES get_top_of_list_height
-      FOR if_salv_gui_om_table_info~get_top_of_list_height .
-    ALIASES get_top_of_list_print
-      FOR if_salv_gui_om_table_info~get_top_of_list_print .
-    ALIASES refresh
-      FOR if_salv_gui_om_table_action~refresh .
-    ALIASES set_data
-      FOR if_salv_gui_om_table_action~set_data .
-    ALIASES set_end_of_list
-      FOR if_salv_gui_om_table_info~set_end_of_list .
-    ALIASES set_end_of_list_height
-      FOR if_salv_gui_om_table_info~set_end_of_list_height .
-    ALIASES set_end_of_list_print
-      FOR if_salv_gui_om_table_info~set_end_of_list_print .
-    ALIASES set_function
-      FOR if_salv_gui_om_table_info~set_function .
-    ALIASES set_modus
-      FOR if_salv_gui_om_table_info~set_modus .
-    ALIASES set_screen_popup
-      FOR if_salv_gui_om_table_action~set_screen_popup .
-    ALIASES set_screen_status
-      FOR if_salv_gui_om_table_info~set_screen_status .
-    ALIASES set_top_of_list
-      FOR if_salv_gui_om_table_info~set_top_of_list .
-    ALIASES set_top_of_list_height
-      FOR if_salv_gui_om_table_info~set_top_of_list_height .
-    ALIASES set_top_of_list_print
-      FOR if_salv_gui_om_table_info~set_top_of_list_print .
-    ALIASES to_xml
-      FOR if_salv_gui_om_table_action~to_xml .
+  TRY.
+      " Create SALV object
+      CALL METHOD cl_salv_table=>factory
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = lt_alv_display.
 
-    CONSTANTS c_functions_none TYPE salv_de_constant VALUE 0 ##NO_TEXT.
-    CONSTANTS c_functions_default TYPE salv_de_constant VALUE 1 ##NO_TEXT.
-    CONSTANTS c_functions_all TYPE salv_de_constant VALUE 2 ##NO_TEXT.
+      " --- Set ALV Title using top-of-list
+      lv_title = |Report { sy-repid } - ALV Output|.
+      CALL METHOD lo_alv->set_top_of_list
+        EXPORTING
+          value = lv_title.
 
-    CLASS-METHODS class_constructor .
-    CLASS-METHODS is_offline
-      RETURNING
-        VALUE(value) TYPE sap_bool .
-    METHODS constructor
-      IMPORTING
-        !o_model_list_services TYPE REF TO if_salv_gui_om_table_info .
-    CLASS-METHODS factory
-      IMPORTING
-        !list_display   TYPE sap_bool DEFAULT if_salv_c_bool_sap=>false
-        !r_container    TYPE REF TO cl_gui_container OPTIONAL
-        !container_name TYPE string OPTIONAL
-      EXPORTING
-        !r_salv_table   TYPE REF TO cl_salv_table
-      CHANGING
-        !t_table        TYPE table
-      RAISING
-        cx_salv_msg .
+      " --- Column settings
+      CALL METHOD lo_alv->get_columns
+        RECEIVING
+          value = lo_columns.
+
+      CALL METHOD lo_columns->set_optimize
+        EXPORTING
+          value = abap_true.
+
+      " --- Rename column 'BETR1' (if exists)
+      TRY.
+          CALL METHOD lo_columns->get_column
+            EXPORTING
+              columnname = 'BETR1'
+            RECEIVING
+              column      = lo_column.
+
+          CALL METHOD lo_column->set_short_text
+            EXPORTING
+              value = 'Amount'.
+
+          CALL METHOD lo_column->set_medium_text
+            EXPORTING
+              value = 'Amount'.
+
+          CALL METHOD lo_column->set_long_text
+            EXPORTING
+              value = 'Amount in Local Currency'.
+        CATCH cx_salv_not_found.
+      ENDTRY.
+
+      " --- Enable all toolbar functions
+      CALL METHOD lo_alv->get_functions
+        RECEIVING
+          value = lo_functions.
+
+      CALL METHOD lo_functions->set_all
+        EXPORTING
+          value = abap_true.
+
+      " --- Display ALV
+      CALL METHOD lo_alv->display.
+
+    CATCH cx_salv_msg INTO DATA(lx).
+      MESSAGE lx->get_text( ) TYPE 'E'.
+    CATCH cx_root INTO DATA(lx2).
+      MESSAGE lx2->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+ENDFORM.
