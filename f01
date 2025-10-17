@@ -1,111 +1,62 @@
-FUNCTION zlonza_alv_popup_table.
-*"----------------------------------------------------------------------
-*"*"Local Interface:
-*"  IMPORTING
-*"     REFERENCE(iv_start_col)    TYPE i DEFAULT 25
-*"     REFERENCE(iv_start_line)   TYPE i DEFAULT 6
-*"     REFERENCE(iv_end_col)      TYPE i DEFAULT 100
-*"     REFERENCE(iv_end_line)     TYPE i DEFAULT 10
-*"     REFERENCE(iv_title)        TYPE string DEFAULT 'ALV'
-*"     REFERENCE(it_field_names)  TYPE STANDARD TABLE OPTIONAL
-*"     REFERENCE(if_show_toolbar) TYPE abap_bool DEFAULT abap_true
-*"  EXPORTING
-*"     REFERENCE(ev_choice)       TYPE flag
-*"  CHANGING
-*"     REFERENCE(it_table)        TYPE STANDARD TABLE OPTIONAL
-*"----------------------------------------------------------------------
+FORM display_alv.
 
-  DATA: lo_container TYPE REF TO cl_gui_dialogbox_container,
-        lo_alv       TYPE REF TO cl_salv_table,
-        lo_func      TYPE REF TO cl_salv_functions,
-        lo_display   TYPE REF TO cl_salv_display_settings,
-        lo_cols      TYPE REF TO cl_salv_columns_table,
-        lv_exit      TYPE abap_bool VALUE abap_false,
-        lv_okcode    TYPE syucomm.
+  DATA: lv_title TYPE string,
+        lo_columns TYPE REF TO cl_salv_columns_table,
+        lo_column  TYPE REF TO cl_salv_column_table,
+        lo_functions TYPE REF TO cl_salv_functions_list,
+        lo_display_settings TYPE REF TO cl_salv_display_settings,
+        lv_subrc TYPE sy-subrc.
 
-  FIELD-SYMBOLS: <lt_table> TYPE STANDARD TABLE.
-
-  "----------------------------------------------------------------------
-  " Safety check
-  "----------------------------------------------------------------------
-  IF it_table IS INITIAL.
-    MESSAGE 'No data available for popup display' TYPE 'I'.
+  " lt_alv_display should already be filled by append_alv_data during processing
+  IF lt_alv_display IS INITIAL.
+    " nothing to display
+    MESSAGE 'No data to display.' TYPE 'I'.
     RETURN.
   ENDIF.
 
-  "----------------------------------------------------------------------
-  " Create popup container with dynamic sizing
-  "----------------------------------------------------------------------
-  DATA(lv_width)  = iv_end_col - iv_start_col.
-  DATA(lv_height) = iv_end_line - iv_start_line.
-
-  CREATE OBJECT lo_container
-    EXPORTING
-      caption = iv_title(50)  " convert STRING to CHAR(50)
-      width   = lv_width
-      height  = lv_height
-      top     = iv_start_line
-      left    = iv_start_col.
-
-  "----------------------------------------------------------------------
-  " Create SALV ALV inside popup
-  "----------------------------------------------------------------------
   TRY.
-      cl_salv_table=>factory(
+      CALL METHOD cl_salv_table=>factory
         EXPORTING
-          r_container  = lo_container
+          list_display = abap_false
         IMPORTING
           r_salv_table = lo_alv
         CHANGING
-          t_table      = it_table
-      ).
-    CATCH cx_salv_msg INTO DATA(lx_msg).
-      MESSAGE lx_msg TYPE 'E'.
-      RETURN.
+          t_table      = lt_alv_display.
+
+      " set a meaningful title
+      lv_title = |Report { sy-repid } - Financials|.
+      lo_alv->get_display()->set_table_for_first_value( ).
+      lo_alv->set_screen_status( )->set_title( lv_title ).
+
+      " configure columns object
+      lo_columns = lo_alv->get_columns( ).
+
+      " set nice short text for amount column (field name must match type def - uppercase)
+      TRY.
+          lo_column = lo_columns->get_column( 'BETR1' ).
+          lo_column->set_short_text( 'Amount' ).
+          lo_column->set_long_text(  'Amount (local)' ).
+          lo_column->set_output_length( 15 ).
+      CATCH cx_salv_not_found.
+        " ignore if column not found
+      ENDTRY.
+
+      " enable totals for the amount column
+      TRY.
+        lo_alv->get_functions( )->set_all( ).
+        lo_alv->get_functions( )->set_sum( abap_true ).
+        " optionally set column sums (SALV usually sums numeric columns automatically)
+      CATCH cx_salv_error INTO DATA(lx_salv).
+        " ignore SALV function errors
+      ENDTRY.
+
+      " display
+      lo_alv->display( ).
+
+    CATCH cx_salv_msg INTO DATA(lx).
+      MESSAGE lx->get_text( ) TYPE 'E'.
+    CATCH cx_root INTO DATA(lx2).
+      MESSAGE lx2->get_text( ) TYPE 'E'.
   ENDTRY.
 
-  "----------------------------------------------------------------------
-  " Configure toolbar visibility
-  "----------------------------------------------------------------------
-  lo_func = lo_alv->get_functions( ).
-  IF if_show_toolbar = abap_true.
-    lo_func->set_all( abap_true ).
-  ELSE.
-    lo_func->set_all( abap_false ).
-  ENDIF.
-
-  "----------------------------------------------------------------------
-  " Configure display settings
-  "----------------------------------------------------------------------
-  lo_display = lo_alv->get_display_settings( ).
-  lo_display->set_list_header( iv_title ).
-  lo_display->set_striped_pattern( abap_true ).
-
-  "----------------------------------------------------------------------
-  " Auto-optimize columns
-  "----------------------------------------------------------------------
-  lo_cols = lo_alv->get_columns( ).
-  TRY.
-      lo_cols->set_optimize( abap_true ).
-    CATCH cx_salv_not_found.
-  ENDTRY.
-
-  "----------------------------------------------------------------------
-  " Display popup
-  "----------------------------------------------------------------------
-  lo_alv->display( ).
-
-  "----------------------------------------------------------------------
-  " Wait for user closing popup (synchronous handling)
-  "----------------------------------------------------------------------
-  CALL METHOD cl_gui_cfw=>flush.
-  ev_choice = 'X'.  " User reached end normally
-
-  "----------------------------------------------------------------------
-  " Free container resources
-  "----------------------------------------------------------------------
-  IF lo_container IS BOUND.
-    CALL METHOD lo_container->free.
-  ENDIF.
-
-ENDFUNCTION.
+ENDFORM.
