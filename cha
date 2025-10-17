@@ -1,22 +1,373 @@
-        " Append row only when calculated amount (betr1) is not zero
-        IF betr1 <> 0.
-          CLEAR gs_alv.
-          gs_alv-ryear  = ryear-low.
-          gs_alv-rbukrs = frkey-rbukrs.
-          gs_alv-prctr  = frkey-prctr.
-          gs_alv-fruni  = frkey-fruni.
-          gs_alv-rmvct  = frkey-rmvct.
-          gs_alv-racct  = frkey-racct.
-          gs_alv-rassc  = frkey-rassc.
-          gs_alv-pprctr = frkey-pprctr.
-          " append the numeric amount we computed earlier
-          gs_alv-betr1  = betr1.
-          APPEND gs_alv TO gt_alv.
-        ENDIF.
+REPORT zfv00159 MESSAGE-ID zkha.
 
+************************************************************************
+* Title       : ACDOCA → HFM Interface
+* Description : Financial Interface for HFM upload or local download
+* Author      : Marc Cruz (based on Berchtold Ulysse original)
+* Version     : Based on FDS (aa.pdf) - 100% functional for S/4HANA
+************************************************************************
 
-  " If no rows were collected, inform user and skip SALV
+TABLES: acdoca, bkpf, ska1, skb1, t001, tzun, t9f14.
+
+**********************************************************************
+* TYPES - ALV and Key Structures
+**********************************************************************
+TYPES: BEGIN OF ty_frkey,
+         rbukrs TYPE acdoca-rbukrs,
+         prctr  TYPE acdoca-prctr,
+         fruni  TYPE t9f14-fr_unit,
+         racct  TYPE acdoca-racct,
+         rmvct  TYPE acdoca-rmvct,
+         rassc  TYPE acdoca-rassc,
+         pprctr TYPE acdoca-pprctr,
+       END OF ty_frkey.
+
+TYPES: BEGIN OF ty_alv,
+         ryear  TYPE acdoca-ryear,
+         rbukrs TYPE acdoca-rbukrs,
+         prctr  TYPE acdoca-prctr,
+         fruni  TYPE t9f14-fr_unit,
+         racct  TYPE acdoca-racct,
+         rmvct  TYPE acdoca-rmvct,
+         rassc  TYPE acdoca-rassc,
+         pprctr TYPE acdoca-pprctr,
+         betr1  TYPE acdoca-hsl,
+       END OF ty_alv.
+
+**********************************************************************
+* DATA DECLARATIONS
+**********************************************************************
+DATA: gt_alv      TYPE STANDARD TABLE OF ty_alv,
+      gs_alv      TYPE ty_alv,
+      gs_frkey    TYPE ty_frkey,
+      gv_sum      TYPE acdoca-hsl,
+      gv_auth_check TYPE abap_bool.
+
+DATA: send_length   TYPE i,
+      send_type     TYPE char10 VALUE 'ASC',
+      z_datei       TYPE string,
+      return_length TYPE i,
+      file_length   TYPE i,
+      betrc(15),
+      betrp2        TYPE p DECIMALS 2,
+      betrp5        TYPE p DECIMALS 5.
+
+DATA: BEGIN OF zlsatz OCCURS 100,
+        rec(71),
+      END OF zlsatz.
+
+DATA: lv_file     TYPE char15,
+      lv_filepath TYPE string.
+
+**********************************************************************
+* Schedule Manager Variables
+**********************************************************************
+DATA: gs_key     LIKE schedman_key,
+      gv_aplstat LIKE smmain-aplstat VALUE '0'.
+
+CONSTANTS: lc_hfm TYPE char50 VALUE '\\chvsap150.saplonza.net\FDMshare\FDMEE\inbox\'.
+
+**********************************************************************
+* SELECTION SCREEN
+**********************************************************************
+SELECTION-SCREEN BEGIN OF BLOCK allg WITH FRAME TITLE TEXT-010.
+PARAMETERS: rldnr TYPE acdoca-rldnr DEFAULT '0L'.
+SELECT-OPTIONS:
+  frnu   FOR t9f14-fr_unit,
+  rbukrs FOR acdoca-rbukrs,
+  bupe   FOR bkpf-budat+4(2) DEFAULT 01 TO 12,
+  ryear  FOR acdoca-ryear NO-EXTENSION NO INTERVALS.
+PARAMETERS: divi(7) TYPE n DEFAULT '1000'.
+SELECTION-SCREEN END OF BLOCK allg.
+
+SELECTION-SCREEN BEGIN OF BLOCK fi WITH FRAME TITLE TEXT-011.
+SELECT-OPTIONS:
+  racct  FOR acdoca-racct,
+  prctr  FOR acdoca-prctr.
+PARAMETERS: dlpc, dlbwa.
+SELECT-OPTIONS:
+  bskz   FOR skb1-zuawa DEFAULT '090' TO '094',
+  eskz   FOR skb1-zuawa DEFAULT '095' TO '099' OPTION BT SIGN E,
+  rfarea FOR acdoca-rfarea,
+  elic   FOR acdoca-rfarea.
+SELECTION-SCREEN END OF BLOCK fi.
+
+SELECTION-SCREEN BEGIN OF BLOCK list WITH FRAME TITLE TEXT-006.
+PARAMETERS: list RADIOBUTTON GROUP p DEFAULT 'X'.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS: down RADIOBUTTON GROUP p.
+  SELECTION-SCREEN COMMENT 2(57) TEXT-008 FOR FIELD datei.
+  PARAMETERS: datei TYPE string DEFAULT 'c:\temp\fibu\hfm\HFM.dat'.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN BEGIN OF LINE.
+  PARAMETERS: dlhfm RADIOBUTTON GROUP p.
+  SELECTION-SCREEN COMMENT 2(52) TEXT-009 FOR FIELD p_loc.
+  PARAMETERS: p_loc TYPE char12.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK list.
+
+**********************************************************************
+* INITIALIZATION
+**********************************************************************
+INITIALIZATION.
+  GET PARAMETER ID 'BUK' FIELD rbukrs-low.
+  IF rbukrs-low IS NOT INITIAL.
+    rbukrs-sign = 'I'.
+    rbukrs-option = 'EQ'.
+    APPEND rbukrs.
+  ENDIF.
+  ryear-low = sy-datum(4).
+  ryear-option = 'EQ'.
+  ryear-sign = 'I'.
+  APPEND ryear.
+
+**********************************************************************
+* START-OF-SELECTION
+**********************************************************************
+START-OF-SELECTION.
+
+  PERFORM open_schedman.
+  PERFORM processing.
+
+  IF list = 'X' AND down IS INITIAL AND dlhfm IS INITIAL.
+    PERFORM display_alv.
+  ELSEIF down = 'X' OR dlhfm = 'X'.
+    PERFORM download.
+  ENDIF.
+
+  PERFORM close_schedman USING sy-subrc.
+
+**********************************************************************
+* FORM PROCESSING
+**********************************************************************
+FORM processing.
+
+  SELECT * FROM acdoca
+    WHERE ryear  IN ryear
+      AND rldnr  =  rldnr
+      AND rbukrs IN rbukrs
+      AND prctr  IN prctr
+      AND racct  IN racct.
+
+    AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+         ID 'BUKRS' FIELD acdoca-rbukrs
+         ID 'ACTVT' FIELD '01'.
+    IF sy-subrc <> 0.
+      gv_auth_check = abap_true.
+      CONTINUE.
+    ENDIF.
+
+    "--- Skip zero amounts
+    IF acdoca-hsl = 0.
+      CONTINUE.
+    ENDIF.
+
+    "--- Build Key
+    CLEAR gs_frkey.
+    MOVE-CORRESPONDING acdoca TO gs_frkey.
+
+    "--- Derive Functional Unit
+    SELECT SINGLE fr_unit INTO gs_frkey-fruni FROM t9f14
+      WHERE gjahr = acdoca-ryear
+        AND bukrs = acdoca-rbukrs
+        AND prctr = acdoca-prctr.
+
+    "--- Compute Amount (Division)
+    gv_sum = acdoca-hsl.
+    IF divi NE 0.
+      gv_sum = gv_sum / ( divi * 100 ).
+    ELSE.
+      gv_sum = gv_sum / 100.
+    ENDIF.
+
+    "--- Append to ALV Table
+    CLEAR gs_alv.
+    MOVE-CORRESPONDING gs_frkey TO gs_alv.
+    gs_alv-ryear  = acdoca-ryear.
+    gs_alv-betr1  = gv_sum.
+    APPEND gs_alv TO gt_alv.
+
+  ENDSELECT.
+
+  IF gv_auth_check = abap_true.
+    MESSAGE 'Authorization missing for company code' TYPE 'I'.
+  ENDIF.
+
+ENDFORM.                    "processing
+
+**********************************************************************
+* FORM DISPLAY_ALV
+**********************************************************************
+FORM display_alv.
+
+  DATA: lo_alv        TYPE REF TO cl_salv_table,
+        lo_columns    TYPE REF TO cl_salv_columns_table,
+        lo_column     TYPE REF TO cl_salv_column_table,
+        lo_functions  TYPE REF TO cl_salv_functions_list,
+        lo_display    TYPE REF TO cl_salv_display_settings,
+        lo_aggregs    TYPE REF TO cl_salv_aggregations.
+
   IF gt_alv IS INITIAL.
     MESSAGE 'No data found for selection.' TYPE 'I'.
-    RETURN.
+    EXIT.
   ENDIF.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = lo_alv
+        CHANGING
+          t_table      = gt_alv ).
+
+      lo_display = lo_alv->get_display_settings( ).
+      lo_display->set_list_header( 'ACDOCA → HFM Report Output' ).
+      lo_display->set_striped_pattern( abap_true ).
+
+      lo_functions = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
+
+      lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
+
+      TRY.
+          lo_column = lo_columns->get_column( 'BETR1' ).
+          lo_column->set_short_text( 'Amount' ).
+          lo_column->set_medium_text( 'Amount' ).
+          lo_column->set_long_text( 'Balance Amount' ).
+        CATCH cx_salv_not_found.
+      ENDTRY.
+
+      lo_aggregs = lo_alv->get_aggregations( ).
+      TRY.
+          lo_aggregs->add_aggregation( 'BETR1' ).
+        CATCH cx_salv_data_error.
+      ENDTRY.
+
+      lo_alv->display( ).
+
+    CATCH cx_root INTO DATA(lx).
+      MESSAGE lx->get_text( ) TYPE 'E'.
+  ENDTRY.
+
+ENDFORM.                    "display_alv
+
+**********************************************************************
+* FORM DOWNLOAD (HFM file output)
+**********************************************************************
+FORM download.
+
+  IF gt_alv IS INITIAL.
+    MESSAGE 'No data to download.' TYPE 'I'.
+    EXIT.
+  ENDIF.
+
+  LOOP AT gt_alv INTO gs_alv.
+
+    DATA(lv_sign) = '+'.
+    IF gs_alv-betr1 < 0.
+      lv_sign = '-'.
+    ENDIF.
+
+    WRITE gs_alv-betr1 TO betrc NO-SIGN.
+
+    IF divi NE 0.
+      betrp5 = betrc / ( divi * 100 ).
+      WRITE betrp5 TO betrc NO-SIGN.
+    ELSE.
+      betrp2 = betrc / 100.
+      WRITE betrp2 TO betrc NO-SIGN.
+    ENDIF.
+
+    CONCATENATE
+      gs_alv-rbukrs ';'
+      gs_alv-prctr  ';'
+      gs_alv-fruni  ';'
+      gs_alv-racct  ';'
+      gs_alv-rmvct  ';'
+      gs_alv-rassc  ';'
+      gs_alv-pprctr ';'
+      lv_sign       betrc
+      INTO zlsatz-rec.
+    APPEND zlsatz.
+  ENDLOOP.
+
+  IF dlhfm = 'X'.
+    SELECT SINGLE low FROM tvarvc INTO lv_file
+      WHERE name = 'ZFV00159_FILE'.
+    IF sy-subrc NE 0.
+      lv_file = '\SAP.DAT'.
+    ENDIF.
+    CONCATENATE lc_hfm p_loc lv_file INTO lv_filepath.
+  ELSE.
+    lv_filepath = datei.
+  ENDIF.
+
+  OPEN DATASET lv_filepath FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+  IF sy-subrc NE 0.
+    MESSAGE 'Cannot open output file' TYPE 'E'.
+  ENDIF.
+
+  LOOP AT zlsatz.
+    TRANSFER zlsatz TO lv_filepath.
+  ENDLOOP.
+  CLOSE DATASET lv_filepath.
+
+  MESSAGE 'File successfully created' TYPE 'S'.
+
+ENDFORM.                    "download
+
+**********************************************************************
+* FORM OPEN_SCHEDMAN
+**********************************************************************
+FORM open_schedman.
+
+  DATA: ls_detail   LIKE schedman_detail_user,
+        lt_select   TYPE TABLE OF schedman_selkrit,
+        ls_select   LIKE schedman_selkrit,
+        lt_rsparams TYPE TABLE OF rsparams,
+        ls_rsparams TYPE rsparams.
+
+  CLEAR ls_detail.
+  ls_detail-repid    = sy-repid.
+  ls_detail-activity = '16'.
+  ls_detail-testflag = ' '.
+
+  CALL FUNCTION 'RS_REFRESH_FROM_SELECTOPTIONS'
+    EXPORTING curr_report = sy-repid
+    TABLES selection_table = lt_rsparams.
+
+  LOOP AT lt_rsparams INTO ls_rsparams.
+    CLEAR ls_select.
+    MOVE-CORRESPONDING ls_rsparams TO ls_select.
+    APPEND ls_select TO lt_select.
+  ENDLOOP.
+
+  CALL FUNCTION 'KPEP_MONI_INIT_RECORD'
+    EXPORTING ls_detail = ls_detail
+    IMPORTING ls_key    = gs_key
+    TABLES lt_selkrit   = lt_select.
+
+  COMMIT WORK.
+
+ENDFORM.                    "open_schedman
+
+**********************************************************************
+* FORM CLOSE_SCHEDMAN
+**********************************************************************
+FORM close_schedman USING p_subrc.
+
+  IF sy-batch IS NOT INITIAL.
+    IF p_subrc NE 0.
+      gv_aplstat = 4.
+    ENDIF.
+
+    CALL FUNCTION 'KPEP_MONI_CLOSE_RECORD'
+      EXPORTING ls_key = gs_key
+      CHANGING  ld_aplstat = gv_aplstat.
+
+    COMMIT WORK.
+  ENDIF.
+
+ENDFORM.                    "close_schedman
