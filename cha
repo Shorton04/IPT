@@ -1,38 +1,35 @@
-FORM display_alv.
+FORM display_alv .
 
   DATA: lo_alv        TYPE REF TO cl_salv_table,
         lo_columns    TYPE REF TO cl_salv_columns_table,
         lo_column     TYPE REF TO cl_salv_column_table,
         lo_functions  TYPE REF TO cl_salv_functions_list,
-        lo_top        TYPE REF TO cl_salv_form_layout_grid,
-        lo_label      TYPE REF TO cl_salv_form_label.
-
-  IF lt_alv_display IS INITIAL.
-    MESSAGE 'No data to display.' TYPE 'I'.
-    RETURN.
-  ENDIF.
+        lo_display    TYPE REF TO cl_salv_display_settings,
+        lo_aggregs    TYPE REF TO cl_salv_aggregations,
+        lo_agg        TYPE REF TO cl_salv_aggregation.
 
   TRY.
-      " --- Create SALV table
-      CALL METHOD cl_salv_table=>factory
+      " Create SALV object (simple ALV, no container)
+      cl_salv_table=>factory(
         IMPORTING
           r_salv_table = lo_alv
         CHANGING
-          t_table      = lt_alv_display.
+          t_table      = lt_alv_display ).
 
-      " --- Create Top-of-List header
-      lo_top = cl_salv_form_layout_grid=>create( ).
-      lo_label = cl_salv_form_label=>create( |Report { sy-repid } - ALV Output| ).
-      lo_top->add_row( ).
-      lo_top->add_label( lo_label ).
+      " ===== Display settings (title, zebra, etc.)
+      lo_display = lo_alv->get_display_settings( ).
+      lo_display->set_list_header( |Report { sy-repid } - ALV Output| ).
+      lo_display->set_striped_pattern( abap_true ).
 
-      lo_alv->set_top_of_list( lo_top ).
+      " ===== Enable ALV toolbar
+      lo_functions = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
 
-      " --- Get Columns and optimize
+      " ===== Optimize column width
       lo_columns = lo_alv->get_columns( ).
       lo_columns->set_optimize( abap_true ).
 
-      " --- Rename column 'BETR1' (if exists)
+      " ===== Rename a specific column (if exists)
       TRY.
           lo_column = lo_columns->get_column( 'BETR1' ).
           lo_column->set_short_text( 'Amount' ).
@@ -41,11 +38,14 @@ FORM display_alv.
         CATCH cx_salv_not_found.
       ENDTRY.
 
-      " --- Enable toolbar buttons
-      lo_functions = lo_alv->get_functions( ).
-      lo_functions->set_all( abap_true ).
+      " ===== Add automatic totals for numeric column(s)
+      lo_aggregs = lo_alv->get_aggregations( ).
+      TRY.
+          lo_aggregs->add_aggregation( 'BETR1' ).
+        CATCH cx_salv_data_error.
+      ENDTRY.
 
-      " --- Display ALV
+      " ===== Finally, display ALV
       lo_alv->display( ).
 
     CATCH cx_salv_msg INTO DATA(lx).
