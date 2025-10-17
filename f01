@@ -1,56 +1,45 @@
 FORM display_alv.
 
-  DATA: lv_title TYPE string,
-        lo_columns TYPE REF TO cl_salv_columns_table,
-        lo_column  TYPE REF TO cl_salv_column_table,
-        lo_functions TYPE REF TO cl_salv_functions_list,
-        lo_display_settings TYPE REF TO cl_salv_display_settings,
-        lv_subrc TYPE sy-subrc.
+  DATA: lv_title     TYPE lvc_title,
+        lo_columns   TYPE REF TO cl_salv_columns_table,
+        lo_column    TYPE REF TO cl_salv_column_table,
+        lo_functions TYPE REF TO cl_salv_functions_list.
 
-  " lt_alv_display should already be filled by append_alv_data during processing
   IF lt_alv_display IS INITIAL.
-    " nothing to display
     MESSAGE 'No data to display.' TYPE 'I'.
     RETURN.
   ENDIF.
 
   TRY.
-      CALL METHOD cl_salv_table=>factory
-        EXPORTING
-          list_display = abap_false
+      " Create SALV table
+      cl_salv_table=>factory(
         IMPORTING
           r_salv_table = lo_alv
         CHANGING
-          t_table      = lt_alv_display.
+          t_table      = lt_alv_display ).
 
-      " set a meaningful title
-      lv_title = |Report { sy-repid } - Financials|.
-      lo_alv->get_display()->set_table_for_first_value( ).
-      lo_alv->set_screen_status( )->set_title( lv_title ).
+      " --- Set a simple title
+      lv_title = |Report { sy-repid } - ALV Output|.
+      lo_alv->set_screen_title( lv_title ).
 
-      " configure columns object
+      " --- Get column settings
       lo_columns = lo_alv->get_columns( ).
+      lo_columns->set_optimize( abap_true ).
 
-      " set nice short text for amount column (field name must match type def - uppercase)
+      " --- Optional: Rename 'BETR1' column
       TRY.
           lo_column = lo_columns->get_column( 'BETR1' ).
           lo_column->set_short_text( 'Amount' ).
-          lo_column->set_long_text(  'Amount (local)' ).
-          lo_column->set_output_length( 15 ).
+          lo_column->set_medium_text( 'Amount' ).
+          lo_column->set_long_text( 'Amount in Local Currency' ).
       CATCH cx_salv_not_found.
-        " ignore if column not found
       ENDTRY.
 
-      " enable totals for the amount column
-      TRY.
-        lo_alv->get_functions( )->set_all( ).
-        lo_alv->get_functions( )->set_sum( abap_true ).
-        " optionally set column sums (SALV usually sums numeric columns automatically)
-      CATCH cx_salv_error INTO DATA(lx_salv).
-        " ignore SALV function errors
-      ENDTRY.
+      " --- Enable ALV standard toolbar functions
+      lo_functions = lo_alv->get_functions( ).
+      lo_functions->set_all( abap_true ).
 
-      " display
+      " --- Finally display the ALV
       lo_alv->display( ).
 
     CATCH cx_salv_msg INTO DATA(lx).
