@@ -1,57 +1,781 @@
-FORM display_alv .
+report zfv00159 message-id zkha.
+************************************************************************
+* Autor      : Berchtold Ulysse
+*
+* Description: Interface FAGLFLEXT --> HFM
+*
+*
+*
+* Changes:
+*----------------------------------------------------------------------
+* Date     ID  Remarks
+*----------------------------------------------------------------------
+* 14.02.2022 panthamat1 EICR-877210 , file name read from table
+*                       so it can be different for P and Q system
+*
+*
+************************************************************************
 
-  DATA: lo_alv        TYPE REF TO cl_salv_table,
-        lo_columns    TYPE REF TO cl_salv_columns_table,
-        lo_column     TYPE REF TO cl_salv_column_table,
-        lo_functions  TYPE REF TO cl_salv_functions_list,
-        lo_display    TYPE REF TO cl_salv_display_settings,
-        lo_aggregs    TYPE REF TO cl_salv_aggregations,
-        lo_agg        TYPE REF TO cl_salv_aggregation.
+tables:     faglflext,
+            bkpf,
+            ska1,
+            skb1,
+            t001,
+            tzun,
+            t9f14.
 
-  TRY.
-      " Create SALV object (simple ALV, no container)
-      cl_salv_table=>factory(
-        IMPORTING
-          r_salv_table = lo_alv
-        CHANGING
-          t_table      = lt_alv_display ).
+types:   begin of ts_stab,
+           rbukrs type faglflext-rbukrs,
+           prctr  type faglflext-prctr,
+           fruni  type t9f14-fr_unit,
+           racct  type faglflext-racct,
+           rmvct  type faglflext-rmvct,
+           rassc  type faglflext-rassc,
+           pprctr type faglflext-pprctr,
+         end of ts_stab.
 
-      " ===== Display settings (title, zebra, etc.)
-      lo_display = lo_alv->get_display_settings( ).
-      lo_display->set_list_header( |Report { sy-repid } - ALV Output| ).
-      lo_display->set_striped_pattern( abap_true ).
+data:   lt_stab type standard table of ts_stab,
+        ls_stab type ts_stab.
 
-      " ===== Enable ALV toolbar
-      lo_functions = lo_alv->get_functions( ).
-      lo_functions->set_all( abap_true ).
+data:    send_length   type i,
+         send_type     type char10 value 'ASC',
+         z_datei       type string,
+         return_length type i,
+         file_length   type i,
+         swvbund,
+         swkonto,
+         sw_prot,
+         monat(02),
+         zumsav        like faglflext-hslvt,
+         sum           like faglflext-hsl01,
+         betr1         like faglflext-hsl01,
+         betrc(15),
+         betrp2        type p decimals 2,
+         betrp5        type p decimals 5,
+         begin of zlsatz occurs 100,
+           rec(71),
+         end of zlsatz,
+         zbukrs(4) type c,          "Hilfsfeld Buchungskreis
+         zkonto(6) type c,          "Hilfsfeld Konto
+         zsubrc    like sy-subrc,     "Hilfsfeld Return-Code
+         lv_konts  type saknr,
+         lv_ktopl  type ktopl,
+         lv_gvtyp  type gvtyp,
 
-      " ===== Optimize column width
-      lo_columns = lo_alv->get_columns( ).
-      lo_columns->set_optimize( abap_true ).
+         begin of frkey,
+           rbukrs type faglflext-rbukrs,
+           prctr  type faglflext-prctr,
+           fruni  type t9f14-fr_unit,
+           racct  type faglflext-racct,
+           rmvct  type faglflext-rmvct,
+           rassc  type faglflext-rassc,
+           pprctr type faglflext-pprctr,
+         end   of frkey,
 
-      " ===== Rename a specific column (if exists)
-      TRY.
-          lo_column = lo_columns->get_column( 'BETR1' ).
-          lo_column->set_short_text( 'Amount' ).
-          lo_column->set_medium_text( 'Amount' ).
-          lo_column->set_long_text( 'Amount in Local Currency' ).
-        CATCH cx_salv_not_found.
-      ENDTRY.
+         begin of dlsatz,
+           rbukrs(04),
+           tren1(01)  value ';',
+           prctr(10),
+           tren2(01)  value ';',
+           fruni(08),
+           tren3(01)  value ';',
+           racct(06),
+           tren4(01)  value ';',
+           rmvct(03),
+           tren5(01)  value ';',
+           rassc(06),
+           tren6(01)  value ';',
+           pprctr(10),
+           tren7(01)  value ';',
+           vorz1(01),
+           betr1(15)  type n,
+         end   of dlsatz.
 
-      " ===== Add automatic totals for numeric column(s)
-      lo_aggregs = lo_alv->get_aggregations( ).
-      TRY.
-          lo_aggregs->add_aggregation( 'BETR1' ).
-        CATCH cx_salv_data_error.
-      ENDTRY.
+field-symbols: <feld>.
 
-      " ===== Finally, display ALV
-      lo_alv->display( ).
+**********************************************************************
+** Begin of Global data declaration for Schedule Manager Monitoring
+** Refer to Note 325118 for any details or change
+**********************************************************************
+* needed global key
+data: gs_key     like schedman_key.
+* needed for closing of  Schedule Manager monitoring
+data: gv_aplstat    like smmain-aplstat value '0'.
+data: lv_open    type flag.
+data: gv_auth_check type boolean.
+data: lt_bapiret like bapireturn,
+      lt_account like bapi3006_2,
+      lv_file type char15.
 
-    CATCH cx_salv_msg INTO DATA(lx).
-      MESSAGE lx->get_text( ) TYPE 'E'.
-    CATCH cx_root INTO DATA(lx2).
-      MESSAGE lx2->get_text( ) TYPE 'E'.
-  ENDTRY.
+* HFM was upgraded, the swerver name changed
+*ONSTANTS:    lc_hfm  TYPE char50 VALUE '\\chvsap101.saplonza.net\FDMshare\FDMEE\inbox\',
+constants:    lc_hfm  type char50 value '\\chvsap150.saplonza.net\FDMshare\FDMEE\inbox\'.
+*              lc_file TYPE char10 VALUE '\SAP.DAT'.
 
-ENDFORM.
+**********************************************************************
+** End of Global data declaration for Schedule Manager Monitoring Note 325118
+**********************************************************************
+
+***************** SELECTION-SCREEN *************************************
+selection-screen begin of block allg with frame title text-010.
+parameters:      rldnr type faglflext-rldnr default '0L'.
+select-options:  frnu for t9f14-fr_unit,
+*** [Beg] - Project Rose - Handling hardcoding
+*                 rbukrs for faglflext-rbukrs default 'CH12',
+                 rbukrs for faglflext-rbukrs,
+*** [End] - Project Rose - Handling hardcoding
+                 bupe for bkpf-budat+4(2) default 01 to 12,
+                 ryear for faglflext-ryear no-extension no intervals.
+parameters:      divi(7) type n default '1000'.
+
+selection-screen: end of block allg.
+
+selection-screen begin of block fi with frame title text-011.
+select-options:  racct for faglflext-racct,
+                 prctr for faglflext-prctr.
+parameters:      dlpc,
+                 dlbwa.
+select-options:  bskz for skb1-zuawa default '090' to '094',
+                 eskz for skb1-zuawa default '095' to '099'
+                                     option bt sign e.
+select-options:  rfarea for faglflext-rfarea,
+                 elic  for faglflext-rfarea.
+selection-screen: end of block fi.
+
+selection-screen  begin of block list with frame title text-006.
+parameters:       list radiobutton group p default 'X'.
+selection-screen skip.
+selection-screen  begin of line.
+parameters:       down radiobutton group p.
+selection-screen  comment 2(57) text-008 for field datei.
+parameters:       datei type string default 'c:\temp\fibu\hfm\HFM.dat'.
+selection-screen  end of line.
+selection-screen skip.
+selection-screen  begin of line.
+parameters:       dlhfm radiobutton group p.
+selection-screen  comment 2(52) text-009 for field p_loc.
+parameters:       p_loc type char12.
+selection-screen  end of line.
+selection-screen: end of block list.
+
+field-groups:     header,
+                  satz.
+
+insert            frkey frkey-racct frkey-rbukrs frkey-prctr frkey-fruni
+                  frkey-rmvct frkey-rassc frkey-pprctr into header.
+
+insert            betr1                         into satz.
+
+***********************************************************************
+*  INITIALIZATION                                                     *
+***********************************************************************
+initialization.
+** Authority Check
+*  IF zcl_authority=>check_authority_zreport( iv_repid = sy-repid ) = abap_false.
+*    EXIT.
+*  ENDIF.
+
+*** [Beg] - Project Rose - Handling hardcoding
+  get parameter id 'BUK' field rbukrs-low.
+  if rbukrs-low is not initial.
+    rbukrs-sign = 'I'.
+    rbukrs-option = 'EQ'.
+    append rbukrs.
+  endif.
+*** [End] - Project Rose - Handling hardcoding
+
+  ryear-low    = sy-datum(4).
+  ryear-option = 'EQ'.
+  ryear-sign   = 'I'.
+  append ryear.
+
+at selection-screen on divi.
+  if divi co '0'.
+    message e600 with 'bitte numerischen Wert eingeben'(013).
+  endif.
+
+at selection-screen on bskz.
+  if bskz-sign is initial or
+     bskz-sign eq 'I'.
+  else.
+    message e600 with 'nur INCL ist als Selekt-Option erlaubt'(005).
+  endif.
+
+at selection-screen on eskz.
+  if eskz-sign eq 'E'.
+  else.
+    message e600 with 'nur EXCL ist als Selekt-Option erlaubt'(006).
+  endif.
+
+at selection-screen on p_loc.
+  if dlhfm = 'X'.
+    if p_loc is initial.
+      message e600 with 'bitte eine Location eingeben!'(016).
+    endif.
+  endif.
+
+**************** START-OF-SELECTION ************************************
+start-of-selection.
+* initialise Schedman (Scheduling Manager - Ref Note 325118)
+*.fill structure with the main informations about this job
+
+  perform open_schedman.
+
+***End of Schedule Manager Monitoring Initialization.
+
+* Processing
+  perform processing.
+
+* sort
+  sort by frkey-rbukrs frkey-racct frkey-rmvct frkey-prctr
+          frkey-fruni frkey-rassc frkey-pprctr frkey.
+
+  loop.
+
+    at new frkey-racct.
+* set swkonto to 'A'
+      swkonto = 'A'.
+    endat.
+
+    at end of frkey.
+
+      if down = 'X' or dlhfm = 'X'.
+        move  frkey-rassc  to  dlsatz-rassc.
+        perform ausgeben.
+      else.
+        if sum(betr1) ne 0.
+
+* error message, if fr unit is empty
+          if frkey-fruni is initial.
+            write: / ryear-low,
+                     frkey-rbukrs,
+                     frkey-prctr,
+*                     text-004.
+                     text-005.
+          endif.
+
+* set swkonto to 'E', in order to display accounts with balance = 0
+          swkonto = 'E'.
+          write: /7 frkey-rbukrs, 12 frkey-prctr, 23 frkey-fruni, 32 frkey-rmvct,
+                   36 frkey-racct, 47 frkey-rassc, 54 frkey-pprctr, 65(16) sum(betr1).
+        endif.
+      endif.
+
+    endat.
+
+
+    at end of frkey-racct.
+
+      if list = 'X' and swkonto = 'E'.
+        write: / 'Total', frkey-rbukrs, 36 frkey-racct, (16) sum(betr1) under sum(betr1).
+        skip.
+      endif.
+
+    endat.
+
+    at last.
+
+      if down = 'X' or dlhfm = 'X'.
+        perform download.
+      else.
+        write: / text-007, (16) sum(betr1) under sum(betr1).
+      endif.
+
+    endat.
+
+  endloop.
+
+* Close Schedman (Schedule Manager monitoring - Ref - Note 325118)
+
+  perform close_schedman using sy-subrc.
+
+*** End of Schedule Manager monitoring - Ref note 325118
+
+* processing
+form processing.
+
+  select * from faglflext
+       where ryear  in ryear
+       and   rldnr  =  rldnr
+*       and   racct  in racct
+       and   rbukrs in rbukrs
+       and   prctr  in prctr.
+
+*** Authority Check Implementation************
+    authority-check object 'F_BKPF_BUK'
+             id 'BUKRS' field faglflext-rbukrs
+             id 'ACTVT' field '01'.
+    if sy-subrc <> 0.
+      gv_auth_check = abap_true.
+      continue.
+    endif.
+
+* if parameter DLBWA is not set, ...
+    if dlbwa = ' '.
+* ignore records with transaction type
+      if not faglflext-rmvct is initial.
+        faglflext-rmvct = space.
+      endif.
+    endif.
+
+* read table T001 in order to determine chart of account
+    on change of faglflext-rbukrs.
+      select single * from t001 where bukrs eq faglflext-rbukrs.
+    endon.
+
+* read account (table SKA1)
+    select single * from ska1
+             where ktopl = t001-ktopl
+             and   saknr = faglflext-racct.
+    if sy-subrc ne 0.
+      write: text-002,
+             t001-ktopl,
+             faglflext-racct.
+      reject.
+    endif.
+
+* read account (table SKB1)
+    select single * from skb1
+             where bukrs = faglflext-rbukrs
+             and   saknr = faglflext-racct.
+    if sy-subrc ne 0.
+      write: text-002,
+             faglflext-rbukrs,
+             faglflext-racct.
+      reject.
+    endif.
+
+    perform selection.
+
+  endselect.
+
+  if gv_auth_check = abap_true.
+    message text-051 type 'I'.
+  endif.
+  clear: gv_auth_check.
+
+endform.                    "processing
+
+* Selection
+form selection.
+
+  clear t9f14.
+  move: faglflext-ryear to t9f14-gjahr,
+        faglflext-rbukrs to t9f14-bukrs,
+        faglflext-prctr to t9f14-prctr.
+
+  read table t9f14.
+
+* Check parameter FRNU in order to avoid error messages
+  check frnu.
+
+  if sy-subrc ne 0.
+    move: '999999'     to t9f14-vbund,
+          '9999999999' to t9f14-prctr.
+
+  endif.
+
+  swvbund = 'A'.
+  move skb1-zuawa to tzun-zuawa.
+
+  read table tzun.
+
+  if sy-subrc = 0.
+    if ska1-xbilk = 'X'.
+      loop at bskz.
+        check bskz.
+        swvbund = 'E'.
+      endloop.
+    else.
+      loop at eskz.
+        check eskz.
+        swvbund = 'E'.
+      endloop.
+    endif.
+  else.
+    write: text-003,
+           skb1-bukrs,
+           skb1-saknr,
+           skb1-zuawa.
+    reject.
+  endif.
+
+  if swvbund = 'A'.
+    clear: faglflext-rassc, faglflext-pprctr.
+  else.
+    if faglflext-rassc is initial.
+      clear faglflext-pprctr.
+    endif.
+  endif.
+
+  read table bupe index 1.
+
+* Balance carried forward
+  zumsav = faglflext-hslvt.
+
+  add faglflext-hsl01 then faglflext-hsl02 until faglflext-hsl16
+                           according to bupe      giving sum.
+
+  move-corresponding faglflext to frkey.
+  move: t9f14-fr_unit to frkey-fruni.
+
+  betr1 = zumsav + sum.
+
+* if parameter 'Download Profit Center' is not set,
+* initialize Profit Center
+  if dlpc ne 'X'.
+    frkey-prctr = space.
+  endif.
+
+* if download ist set and ...
+  if ( down = 'X' or dlhfm = 'X' ).
+* lesen Sachkonto-A-Segment wegen Kontoart
+    select single * from ska1
+             where ktopl = t001-ktopl
+             and   saknr = faglflext-racct
+             and   xbilk  = ' '.
+    if sy-subrc = 0.
+* without constant exchange rate accounts...
+      if faglflext-racct not between '0000915001' and '0000915098'.
+* set transaction type to 999 and...
+        frkey-rmvct = '999'.
+      endif.
+    endif.
+  endif.
+
+* account is selected
+  if frkey-racct in racct.
+    extract satz.
+  endif.
+
+* read account (SKA1)
+  select single * from ska1
+           where ktopl = t001-ktopl
+           and   saknr = faglflext-racct.
+
+  if sy-subrc = 0 and ska1-xbilk = 'X' and not
+    faglflext-racct = '0000188367'.
+  else.
+* if account = 188367...
+    if faglflext-racct = '0000188367'.
+* set transaction type to 999
+      frkey-rmvct = '999'.
+    endif.
+* if functional area exists...
+    if not faglflext-rfarea is initial.
+      check rfarea.
+      if faglflext-rfarea in elic.
+        frkey-rassc  = space.
+        frkey-pprctr = space.
+      else.
+        if frkey-rassc = space.
+          frkey-pprctr = space.
+        endif.
+      endif.
+
+* write 2nd record with functional area in GL account
+      frkey-racct = faglflext-rfarea.
+      extract satz.
+    endif.
+  endif.
+
+endform.                    "selection
+
+* write download
+form ausgeben.
+
+  if sum(betr1) = 0.
+    exit.
+  endif.
+
+* error message, if fr unit is empty
+  if frkey-fruni is initial.
+    write: / ryear-low,
+             frkey-rbukrs,
+             frkey-prctr,
+             text-005.
+  endif.
+
+  move:  frkey-rbukrs      to  dlsatz-rbukrs,
+         frkey-prctr       to  dlsatz-prctr,
+         frkey-fruni       to  dlsatz-fruni,
+         frkey-rmvct       to  dlsatz-rmvct,
+         frkey-rassc       to  dlsatz-rassc,
+         frkey-pprctr      to  dlsatz-pprctr.
+
+* if a profit center exists...
+  if not frkey-prctr is initial.
+* set field DLSATZ-GB_PC left justified
+    shift dlsatz-prctr left deleting leading ' 0'.
+  endif.
+* if partner profit Center exists...
+  if not frkey-pprctr is initial.
+* set field DLSATZ-PG_PC left justified
+    shift dlsatz-pprctr left deleting leading ' 0'.
+  endif.
+
+* if it's a G/L account...
+  if frkey-racct+4(6) ne space.
+* right justified
+    move frkey-racct+4(6)  to  dlsatz-racct.
+  else.
+* if it's a functional area then left justified
+    move frkey-racct(4)    to  dlsatz-racct.
+  endif.
+
+* transfer balance carried forward to download
+  if sum(betr1) < 0.
+    dlsatz-vorz1 = '-'.
+  else.
+    dlsatz-vorz1 = '+'.
+  endif.
+
+* transfer amount with decimals to field BETRC
+  write sum(betr1) to betrc
+                      using edit mask 'RR______________'
+                      no-sign.
+
+* if parameter 'divide by' is set...
+  if divi ne 0.
+* multiply divisor with 100
+    betrp5 = betrc / ( divi * 100 ).
+* transfer amount with 5 decimals to field BETRC
+    write betrp5 to betrc
+                 using edit mask 'RR______________'
+                 no-sign.
+  else.
+* divide by 100
+    betrp2 = betrc / 100.
+* transfer amount with 2 decimals to field BETRC
+    write betrp2 to betrc
+                 using edit mask 'RR______________'
+                 no-sign.
+  endif.
+
+  move: betrc   to dlsatz-betr1,
+        dlsatz  to zlsatz.
+
+  replace '+' with ' ' into zlsatz.
+
+* if parameter 'Divide by' is set, ...
+  if divi ne 0.
+* move 5 decimals 1 position to the right...
+    shift zlsatz+65(6) right.
+* and insert a comma
+    move '.' to zlsatz+65(1).
+  else.
+* else move 2 decimals 1 position to the right...
+    shift zlsatz+68(1) right.
+* and insert a comma
+    move '.' to zlsatz+68(3).
+  endif.
+
+  append zlsatz.
+* WRITE / ZLSATZ.
+
+endform.                    "AUSGEBEN
+
+
+*---------------------------------------------------------------------*
+*       FORM DOWNLOAD                                                 *
+*---------------------------------------------------------------------*
+*       ........                                                      *
+*---------------------------------------------------------------------*
+form download.
+
+  data: lv_filepath         type file.
+
+  if sy-batch is initial and
+    dlhfm ne 'X'.
+
+    send_type = 'ASC'.
+
+    z_datei = datei.
+    clear file_length.
+    call function 'GUI_DOWNLOAD'
+      exporting
+        bin_filesize        = send_length
+*       no_auth_check       = 'X'
+        codepage            = ' '
+        filename            = z_datei
+        filetype            = send_type
+        wk1_n_format        = ' '
+        wk1_n_size          = ' '
+        wk1_t_format        = ' '
+        wk1_t_size          = ' '
+      importing
+        filelength          = return_length
+      tables
+        data_tab            = zlsatz
+      exceptions
+        file_open_error     = 1
+        file_write_error    = 2
+        invalid_filesize    = 3
+        invalid_table_width = 4
+        invalid_type        = 5
+        no_batch            = 6
+        unknown_error       = 7
+        others              = 8.
+    if sy-subrc = 0.
+      write: / text-021.
+    else.
+      message e600 with text-023 sy-subrc text-024.
+    endif.
+  else.
+
+    if dlhfm = 'X'.
+     "begin panthamat1 EICR-877210
+      select single low from tvarvc into lv_file
+        where name = 'ZFV00159_FILE'.
+
+      if sy-subrc ne 0.
+
+        if sy-sysid = 'P10'.
+          lv_file = '\SAP.DAT'.
+        else.
+          lv_file = '\TESTSAP.DAT'.
+        endif.
+      endif.
+
+      "end panthamat1 EICR-877210
+
+      concatenate lc_hfm p_loc lv_file into lv_filepath.
+    else.
+      lv_filepath = datei.
+    endif.
+
+    skip.
+    translate lv_filepath to lower case.
+    open dataset lv_filepath for output in text mode encoding default.
+    if sy-subrc ne 0.
+      message e600 with text-020.
+    else.
+
+      loop at zlsatz.
+        transfer zlsatz to lv_filepath.
+      endloop.
+
+      if sy-subrc = 0.
+        write: / text-021.
+      else.
+        write: / text-022.
+      endif.
+    endif.
+
+    close dataset lv_filepath.
+
+  endif.
+endform.                    "DOWNLOAD
+
+*&---------------------------------------------------------------------*
+*&      Form  open_schedman
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form open_schedman .
+
+* needed for initialization of application relevant data
+  data: ls_detail   like schedman_detail_user,
+        lt_select   type table of schedman_selkrit,
+        ls_select   like schedman_selkrit,
+        lt_rsparams type table of rsparams,
+        ls_rsparams type rsparams.
+
+  if sy-batch is initial.
+    return.
+  endif.
+
+  clear ls_detail.
+  ls_detail-repid    = sy-repid.       "name of report -> very important
+  ls_detail-activity = '16'.           "e.g. execute
+  ls_detail-testflag = ' '.            "This is NOT a test run
+
+*.Fill fields from selection screen into table (only if wanted).
+*.Please take care that you always have got a DDIC-Structure and Field
+  refresh: lt_select, lt_select.
+
+* Get select options
+
+  call function 'RS_REFRESH_FROM_SELECTOPTIONS'
+    exporting
+      curr_report     = sy-repid
+    tables
+      selection_table = lt_rsparams
+    exceptions
+      not_found       = 1
+      no_report       = 2
+      others          = 3.
+  if sy-subrc <> 0.
+    message id sy-msgid type sy-msgty number sy-msgno
+            with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  endif.
+
+  loop at lt_rsparams into ls_rsparams.
+    clear: ls_select.
+    check not ls_rsparams-low is initial or
+          not ls_rsparams-high is initial .
+    move-corresponding ls_rsparams to ls_select.
+    move ls_rsparams-selname to ls_select-field.
+    move ls_rsparams-option to ls_select-optio.
+    case ls_rsparams-selname.
+      when 'BUKRS'.
+        ls_select-structure = 'FAGLFLEXT'.
+        ls_select-field = 'RBUKRS'.
+*        ls_select-entry = 10.
+      when 'BUPE'.
+        ls_select-structure = 'RFPDO2'.
+        ls_select-field = 'SBWAPERA'.
+*        ls_select-entry = 2.
+      when 'RYEAR'.
+        ls_select-structure = 'FAGLFLEXT'.
+        ls_select-field = 'RYEAR'.
+*        ls_select-entry = 1.
+      when others.    continue.
+    endcase.
+*   ls_select-entry = sy-tabix.
+    append ls_select to lt_select.
+  endloop.
+
+*.Now call the function to initialise Schedman
+  call function 'KPEP_MONI_INIT_RECORD'
+    exporting
+      ls_detail  = ls_detail
+    importing
+      ls_key     = gs_key
+    tables
+      lt_selkrit = lt_select.
+
+  commit work.            "<--very important to store the initialisation
+
+endform.                    " open_schedman
+*&---------------------------------------------------------------------*
+*&      Form  close_schedman
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p_subrc        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form close_schedman using p_subrc.
+
+  if sy-batch is not initial .
+    if p_subrc ne 0.
+      gv_aplstat = 4.
+    endif.
+
+    call function 'KPEP_MONI_CLOSE_RECORD'
+      exporting
+        ls_key      = gs_key
+*       ls_scma_event = gs_scma_event
+      changing
+        ld_aplstat  = gv_aplstat
+      exceptions
+        no_id_given = 1
+        others      = 2.
+
+    commit work.
+  endif.
+endform.                    " close_schedman
