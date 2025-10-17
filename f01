@@ -18,9 +18,8 @@ FORM display_alv.
         CHANGING
           t_table      = lt_alv_display.
 
-      " --- Set a simple title (compatible way)
-      lv_title = |Report { sy-repid } - ALV Output|.
-      lo_alv->set_list_header( lv_title ).
+      " --- Display report title manually
+      WRITE: / 'Report', sy-repid, '- ALV Output'.
 
       " --- Get column settings
       CALL METHOD lo_alv->get_columns
@@ -37,7 +36,7 @@ FORM display_alv.
             EXPORTING
               columnname = 'BETR1'
             RECEIVING
-              value      = lo_column.
+              column      = lo_column.
 
           CALL METHOD lo_column->set_short_text
             EXPORTING
@@ -53,7 +52,7 @@ FORM display_alv.
         CATCH cx_salv_not_found.
       ENDTRY.
 
-      " --- Enable all standard toolbar functions
+      " --- Enable ALV toolbar functions
       CALL METHOD lo_alv->get_functions
         RECEIVING
           value = lo_functions.
